@@ -2,6 +2,7 @@
 #define CAMERA_H
 
 #include "hittable.h"
+#include "material.h"
 
 class camera {
   public:
@@ -98,12 +99,20 @@ class camera {
 
         //0.001 is to fix the shadow acne problem, which is caused by floating point precision errors when a ray hits a surface and then immediately intersects with the same surface again.
         if (world.hit(r, interval(0.001, infinity), rec)) {
+            //Old logic
             //Random diffuse distribution of ray
             //vec3 direction = random_on_hemisphere(rec.normal);
 
             //Random lambertian distribution of ray
-            vec3 direction = rec.normal + random_unit_vector();
-            return 0.5 * ray_color(ray(rec.p, direction), depth-1, world);
+            //vec3 direction = rec.normal + random_unit_vector();
+            //return 0.5 * ray_color(ray(rec.p, direction), depth-1, world);
+
+            //new logic with materials
+            ray scattered;
+            color attenuation;
+            if(rec.mat->scatter(r, rec, attenuation, scattered))
+                return attenuation * ray_color(scattered, depth-1, world);
+            return color(0,0,0);
         }
 
         vec3 unit_direction = unit_vector(r.direction());
