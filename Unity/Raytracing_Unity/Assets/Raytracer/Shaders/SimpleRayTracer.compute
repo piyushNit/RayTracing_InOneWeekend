@@ -1,10 +1,36 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
+const float c_rayPosNormalNudge = 0.01f;
+const float c_minimumRayHitTime = 0.01f;
+const float c_pi = 3.14159265359f;
+const float c_twopi = 2.0f * 3.14159265359f;
+const float c_superFar = 1000000.0f;
+
+struct Light
+{
+    float3 position;
+    float radius;
+    float4 color;
+    float4 emissive;
+};
+
 struct Sphere
 {
     float3 position;
     float radius;
+    float4 color;   //xyz : color, w : pad
+    float4 emissive;//xyz : color, w : pad
+};
+
+struct Quad
+{
+    float4 center_sizeX;
+    float4 normal_sizeY;
+    float4 tangent;   // xyz : Right direction of the quad, w : pad
+    float4 bitangent; // xyz : Up direction of the quad, w : pad
+    float4 color;//xyz : color, w : pad
+    float4 emissive;//xyz : color, w : pad
 };
 
 struct Ray
@@ -13,53 +39,239 @@ struct Ray
     float3 dir;
 };
 
+struct RayHitInfo
+{
+    float dist;
+    float3 normal;
+    float3 albedo;
+    float3 emissive;
+};
+
+float3 ray_at(float t, in Ray ray)
+{
+    return ray.origin + t * ray.dir;
+}
+
+uint wang_hash(inout uint seed)
+{
+    seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
+    seed *= uint(9);
+    seed = seed ^ (seed >> 4);
+    seed *= uint(0x27d4eb2d);
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+
+float RandomFloat01(inout uint state)
+{
+    return float(wang_hash(state)) / 4294967296.0;
+}
+
+float3 RandomUnitVector(inout uint state)
+{
+    float z = RandomFloat01(state) * 2.0f - 1.0f;
+    float a = RandomFloat01(state) * c_twopi;
+    float r = sqrt(1.0f - z * z);
+    float x = r * cos(a);
+    float y = r * sin(a);
+    return float3(x, y, z);
+}
+
+float3 random_on_hemisphere(in float3 normal, inout uint state)
+{
+    float3 on_unit_sphere = RandomUnitVector(state);
+    if (dot(on_unit_sphere, normal) > 0.0)
+        return on_unit_sphere;
+    else
+        return -on_unit_sphere;
+}
+
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
 RWTexture2D<float4> Result;
+
 StructuredBuffer<Sphere> sphereMeshes;
 int sphereMeshCount;
+
+StructuredBuffer<Quad> quadMeshes;
+int quadMeshCount;
+
+StructuredBuffer<Light> sceneLights;
+int totalSceneLightCount;
 
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
 float3 cameraCenter;
 float focalLength;
 
-bool hit_sphere(float3 center, float radius, inout Ray ray)
+int rayBounceCount = 1;
+int iFrame;
+
+float ScalarTriple(float3 u, float3 v, float3 w)
 {
-    float3 oc = center - ray.origin;
-    float a = dot(ray.dir, ray.dir);
-    float b = -2.0 * dot(ray.dir, oc);
-    float c = dot(oc, oc) - radius * radius;
-    float discriminant = b*b - 4*a*c;
-    return (discriminant >= 0);
+    return dot(cross(u, v), w);
 }
 
-float3 ray_color(in Ray ray)
+bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo)
 {
-    float3 color = float3(0, 0, 0);
-    bool found = false;
-    for(int i = 0; i < sphereMeshCount; i++)
+    float3 center = quad.center_sizeX.xyz;
+    float3 normal = quad.normal_sizeY.xyz;
+    float2 size = float2(quad.center_sizeX.w, quad.normal_sizeY.w);
+    // 1. Ray-Plane Intersection
+    float denom = dot(ray.dir, normal);
+    
+    // If denominator is close to 0, the ray is parallel to the plane
+    if (abs(denom) < 1e-6) return false;
+
+    // Calculate distance along the ray to the plane
+    float t = dot(center - ray.origin, normal) / denom;
+
+    // If t is negative, the quad is behind the camera
+    if (t < 0.0f) return false;
+
+    // Find the exact hit point in world space
+    float3 pHit = ray.origin + ray.dir * t;
+
+    // 2. Local Bounds Check
+    float3 dirToHit = pHit - center;
+
+    // Project the hit vector onto the quad's local axes
+    float localX = dot(dirToHit, quad.tangent.xyz);
+    float localY = dot(dirToHit, quad.bitangent.xyz);
+
+    // Check if the hit point is within the width and height limits
+    float halfWidth = size.x * 0.5f;
+    float halfHeight = size.y * 0.5f;
+
+    if (abs(localX) <= halfWidth && abs(localY) <= halfHeight)
     {
-        if (hit_sphere(sphereMeshes[i].position, sphereMeshes[i].radius, ray))
+        hitInfo.dist = t;
+        hitInfo.normal = normal;
+        hitInfo.albedo = quad.color.xyz;
+        hitInfo.emissive = quad.emissive.xyz;
+        return true; // Hit!
+    }
+
+    return false;
+}
+
+bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sph)
+{
+    float3 oc = sph.position - ray.origin;
+    float a = dot(ray.dir, ray.dir);
+    float h = dot(ray.dir, oc);
+    float c = dot(oc, oc) - sph.radius * sph.radius;
+    float discriminant = h*h - a*c;
+
+    if (discriminant < 0.0f)
+    {
+        return false;
+    }
+
+    bool fromInside = false;
+
+    float dist = (h - sqrt(discriminant)) / a;
+
+    if(discriminant >= 0 && dist < info.dist)
+    {
+        info.dist = dist;
+        //info.normal = normalize(ray_at(info.dist, ray) - sph.position);
+        //info.normal = normalize
+        info.albedo = sph.color.rgb;
+        info.emissive = sph.emissive.rgb;
+        return true;
+    }
+
+    return false;
+}
+
+void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
+{
+    if(quadMeshCount > 0)
+    {
+        for(int i = 0; i < quadMeshCount; i++)
         {
-            found = true;
-            color = float3(1, 0, 0);
+            Quad quad = quadMeshes[i];
+            IntersectQuad(ray, quad, hitInfo);
         }
     }
 
+    if(totalSceneLightCount > 0)
+    {
+        // Test with lights
+        Light sceneLight = sceneLights[0];
+        Sphere lightSph;
+        lightSph.position = sceneLight.position;
+        lightSph.radius = sceneLight.radius;
+        lightSph.color = sceneLight.color;
+        lightSph.emissive = sceneLight.emissive;
+        TestSphereTrace(ray, hitInfo, lightSph);
+    }
+
+    // Test with all the spheres
+    for(int i = 0; i < sphereMeshCount; i++)
+    {
+        Sphere sph = sphereMeshes[i];
+        if(TestSphereTrace(ray, hitInfo, sph))
+        {
+        }
+    }
+}
+
+float3 ray_color(in Ray ray, uint rngState)
+{
+    float3 color = float3(0, 0, 0);
+    float3 throughput = float3(1, 1, 1);
+
+    bool found = false;
+
+    float3 rayOrigin = ray.origin;
+    float3 rayDir = ray.dir;
+
+    int totalFound = 1;
+
+    for(int iBounce = 0; iBounce < 10; iBounce++)
+    {
+        Ray newRay;
+        newRay.origin = rayOrigin;
+        newRay.dir = rayDir;
+
+        RayHitInfo hitInfo;
+        hitInfo.dist = c_superFar;
+
+        TestInTheScene(newRay, hitInfo, rngState);
+
+        if(hitInfo.dist == c_superFar)
+        {
+            break;
+        }
+
+        throughput *= hitInfo.albedo;
+        color += hitInfo.emissive * throughput;
+        found = true;
+        totalFound++;
+
+        rayOrigin = (rayOrigin + rayDir * hitInfo.dist) + hitInfo.normal * c_rayPosNormalNudge;
+        rayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+    }
+
+    #if 1 // draw sky
     if(found)
         return color;
 
     float3 unit_direction = normalize(ray.dir);
     float a = 0.5 * (unit_direction.x + 1.0f);
     return lerp(float3(1.0, 1.0, 1.0), float3(0.5, 0.7, 1.0), a);
+    #else
+        return color;
+    #endif
 }
 
 Ray CreateCameraRay(float2 uv)
 {
     float2 xy = uv * 2.0f - 1.0f;
-    float4 ray = mul(_CameraInverseProjection, float4(xy, 0.0f, 1.0f));
-    float3 rayDir = mul(_CameraToWorld, float4(ray.xyz, 0.0f)).xyz;
+    float4 rayPos = mul(_CameraInverseProjection, float4(xy, 0.0f, 1.0f));
+    float3 rayDir = mul(_CameraToWorld, float4(rayPos.xyz, 0.0f)).xyz;
     rayDir = normalize(rayDir);
 
     float3 rayOrigin = _CameraToWorld._m03_m13_m23;
@@ -77,10 +289,12 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     Result.GetDimensions(width, height);
     if(id.x >= width || id.y >= height) return;
 
+    uint rngState = uint(uint(id.x) * uint(1973) + uint(id.y) * uint(9277) + uint(iFrame) * uint(26699)) | uint(1);
+
     float2 uv = float2((float)id.x / (float)width, (float)id.y / (float)height);
     Ray ray = CreateCameraRay(uv);
 
-    float3 pixel_color = ray_color(ray);
+    float3 pixel_color = ray_color(ray, rngState);
 
     Result[id.xy] = float4(pixel_color, 1.0);
 }
