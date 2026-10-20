@@ -2,10 +2,9 @@
 #pragma kernel CSMain
 
 const float c_rayPosNormalNudge = 0.01f;
-const float c_minimumRayHitTime = 0.01f;
 const float c_pi = 3.14159265359f;
 const float c_twopi = 2.0f * 3.14159265359f;
-const float c_superFar = 1000000.0f;
+const float c_superFar = 10000000.0f;
 
 struct Light
 {
@@ -99,6 +98,9 @@ int quadMeshCount;
 StructuredBuffer<Light> sceneLights;
 int totalSceneLightCount;
 
+StructuredBuffer<Quad> sceneQuadLights;
+int totalSceneQuadLightCount;
+
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
 float3 cameraCenter;
@@ -106,6 +108,9 @@ float focalLength;
 
 int rayBounceCount = 1;
 int iFrame;
+
+int perPixelSampleCount = 1;
+float c_minimumRayHitTime = 0.01f;
 
 float ScalarTriple(float3 u, float3 v, float3 w)
 {
@@ -117,29 +122,21 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo)
     float3 center = quad.center_sizeX.xyz;
     float3 normal = quad.normal_sizeY.xyz;
     float2 size = float2(quad.center_sizeX.w, quad.normal_sizeY.w);
-    // 1. Ray-Plane Intersection
+
     float denom = dot(ray.dir, normal);
     
-    // If denominator is close to 0, the ray is parallel to the plane
     if (abs(denom) < 1e-6) return false;
 
-    // Calculate distance along the ray to the plane
     float t = dot(center - ray.origin, normal) / denom;
 
-    // If t is negative, the quad is behind the camera
     if (t < 0.0f) return false;
 
-    // Find the exact hit point in world space
     float3 pHit = ray.origin + ray.dir * t;
-
-    // 2. Local Bounds Check
     float3 dirToHit = pHit - center;
 
-    // Project the hit vector onto the quad's local axes
     float localX = dot(dirToHit, quad.tangent.xyz);
     float localY = dot(dirToHit, quad.bitangent.xyz);
 
-    // Check if the hit point is within the width and height limits
     float halfWidth = size.x * 0.5f;
     float halfHeight = size.y * 0.5f;
 
@@ -155,33 +152,45 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo)
     return false;
 }
 
-bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sph)
+bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere)
 {
-    float3 oc = sph.position - ray.origin;
-    float a = dot(ray.dir, ray.dir);
-    float h = dot(ray.dir, oc);
-    float c = dot(oc, oc) - sph.radius * sph.radius;
-    float discriminant = h*h - a*c;
+	//get the vector from the center of this sphere to where the ray begins.
+	float3 m = ray.origin - sphere.position;
 
-    if (discriminant < 0.0f)
-    {
-        return false;
-    }
+    //get the dot product of the above vector and the ray's vector
+	float b = dot(m, ray.dir);
 
+	float c = dot(m, m) - sphere.radius * sphere.radius;
+
+	//exit if r's origin outside s (c > 0) and r pointing away from s (b > 0)
+	if(c > 0.0 && b > 0.0)
+		return false;
+
+	//calculate discriminant
+	float discr = b * b - c;
+
+	//a negative discriminant corresponds to ray missing sphere
+	if(discr < 0.0)
+		return false;
+    
+	//ray now found to intersect sphere, compute smallest t value of intersection
     bool fromInside = false;
-
-    float dist = (h - sqrt(discriminant)) / a;
-
-    if(discriminant >= 0 && dist < info.dist)
+	float dist = -b - sqrt(discr);
+    if (dist < 0.0f)
     {
-        info.dist = dist;
-        //info.normal = normalize(ray_at(info.dist, ray) - sph.position);
-        //info.normal = normalize
-        info.albedo = sph.color.rgb;
-        info.emissive = sph.emissive.rgb;
+        fromInside = true;
+        dist = -b + sqrt(discr);
+    }
+    
+	if (dist > c_minimumRayHitTime)
+    {
+        info.dist = dist;        
+        info.normal = normalize(ray_at(info.dist, ray) - sphere.position) * (fromInside ? -1.0f : 1.0f);
+        info.albedo = sphere.color.xyz;
+        info.emissive = sphere.emissive.xyz;
         return true;
     }
-
+    
     return false;
 }
 
@@ -196,16 +205,28 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
         }
     }
 
+    if(totalSceneQuadLightCount > 0)
+    {
+        for(int i = 0; i < totalSceneQuadLightCount; i++)
+        {
+            Quad quad = sceneQuadLights[i];
+            IntersectQuad(ray, quad, hitInfo);
+        }
+    }
+
     if(totalSceneLightCount > 0)
     {
-        // Test with lights
-        Light sceneLight = sceneLights[0];
-        Sphere lightSph;
-        lightSph.position = sceneLight.position;
-        lightSph.radius = sceneLight.radius;
-        lightSph.color = sceneLight.color;
-        lightSph.emissive = sceneLight.emissive;
-        TestSphereTrace(ray, hitInfo, lightSph);
+        for(int i = 0; i < totalSceneLightCount; i++)
+        {
+            // Test with lights
+            Light sceneLight = sceneLights[i];
+            Sphere lightSph;
+            lightSph.position = sceneLight.position;
+            lightSph.radius = sceneLight.radius;
+            lightSph.color = sceneLight.color;
+            lightSph.emissive = sceneLight.emissive;
+            TestSphereTrace(ray, hitInfo, lightSph);
+        }
     }
 
     // Test with all the spheres
@@ -230,7 +251,7 @@ float3 ray_color(in Ray ray, uint rngState)
 
     int totalFound = 1;
 
-    for(int iBounce = 0; iBounce < 10; iBounce++)
+    for(int iBounce = 0; iBounce < rayBounceCount; iBounce++)
     {
         Ray newRay;
         newRay.origin = rayOrigin;
@@ -246,13 +267,16 @@ float3 ray_color(in Ray ray, uint rngState)
             break;
         }
 
-        throughput *= hitInfo.albedo;
         color += hitInfo.emissive * throughput;
+        throughput *= hitInfo.albedo;
+        //color = hitInfo.normal;
         found = true;
         totalFound++;
 
-        rayOrigin = (rayOrigin + rayDir * hitInfo.dist) + hitInfo.normal * c_rayPosNormalNudge;
-        rayDir = normalize(hitInfo.normal + RandomUnitVector(rngState));
+        //color = hitInfo.normal;
+
+        rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+        rayDir = normalize(hitInfo.normal + random_on_hemisphere(hitInfo.normal, rngState));
     }
 
     #if 1 // draw sky
@@ -292,9 +316,22 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     uint rngState = uint(uint(id.x) * uint(1973) + uint(id.y) * uint(9277) + uint(iFrame) * uint(26699)) | uint(1);
 
     float2 uv = float2((float)id.x / (float)width, (float)id.y / (float)height);
-    Ray ray = CreateCameraRay(uv);
 
-    float3 pixel_color = ray_color(ray, rngState);
+    float3 accumulatedColor = float3(0, 0, 0);
 
-    Result[id.xy] = float4(pixel_color, 1.0);
+    int sameplCount = max(perPixelSampleCount, 1);
+    for(int i = 0; i < sameplCount; i++)
+    {
+        float jitterX = RandomFloat01(rngState);
+        float jitterY = RandomFloat01(rngState);
+
+        float2 uv = float2((float(id.x) + jitterX) / (float)width, (float(id.y) + jitterY) / (float)height);
+
+        Ray ray = CreateCameraRay(uv);
+        accumulatedColor += ray_color(ray, rngState);
+    }
+
+    accumulatedColor /= (float)sameplCount;
+
+    Result[id.xy] = float4(accumulatedColor, 1.0);
 }

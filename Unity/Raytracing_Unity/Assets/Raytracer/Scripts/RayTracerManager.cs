@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Unity.Mathematics;
@@ -34,16 +35,20 @@ struct RayLight
 public class RayTracerManager : MonoBehaviour
 {
     public int rayBounceCount = 1;
+    public int perPixelSampelCount = 1;
+    public float minHitRayTime = 0.01f;
     public RenderTexture renderTarget;
     public ComputeShader rayTracerCS;
 
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
-    RayTraceLight rayTraceLight;
+    private List<RayTraceLight> rayTraceLights;
+    private List<QuadLight> rayQuadLights;
 
     private ComputeBuffer sphereMeshBuffers = null;
     private ComputeBuffer quadMeshBuffer = null;
     private ComputeBuffer sceneLightBuffers = null;
+    private ComputeBuffer sceneQuadLightBuffer = null;
 
     int kernalHandle = -1;
 
@@ -53,13 +58,16 @@ public class RayTracerManager : MonoBehaviour
     RaySphere[] sceneSpheres;
     RayQuad[] sceneQuades;
     RayLight[] sceneLights;
+    RayQuad[] sceneQuadLights;
 
     void Awake()
     {
         FindSphereMeshes();
         FindQuadMeshes();
 
-        rayTraceLight = FindAnyObjectByType<RayTraceLight>();
+        FindSphereLights();
+        FindQuadLights();
+
         rayTracerCamera = Camera.main.GetComponent<RayTracerCamera>();
 
         InitializeBuffers();
@@ -67,10 +75,12 @@ public class RayTracerManager : MonoBehaviour
 
     void InitializeBuffers()
     {
-        int totalItems = sceneSphereMeshes.Count;
-        sceneSpheres = new RaySphere[totalItems];
+        int totalItems = Mathf.Max(sceneSphereMeshes.Count, 1);
+        int totalQuads = Mathf.Max(sceneQuadMeshes.Count, 1);
+        int totalShpLight = Mathf.Max(rayTraceLights.Count, 1);
+        int totalQuadLights = Mathf.Max(rayQuadLights.Count, 1);
 
-        int totalQuads = sceneQuadMeshes.Count;
+        sceneSpheres = new RaySphere[totalItems];
         sceneQuades = new RayQuad[totalQuads];
 
         int sphStride = System.Runtime.InteropServices.Marshal.SizeOf(typeof(RaySphere));
@@ -80,14 +90,29 @@ public class RayTracerManager : MonoBehaviour
         quadMeshBuffer = new ComputeBuffer(totalQuads, quadStride);
 
         int lightStride = System.Runtime.InteropServices.Marshal.SizeOf(typeof(RayLight));
-        sceneLightBuffers = new ComputeBuffer(1, lightStride);
-        sceneLights = new RayLight[1];
+        sceneLightBuffers = new ComputeBuffer(totalShpLight, lightStride);
+        sceneLights = new RayLight[totalShpLight];
+
+        sceneQuadLightBuffer = new ComputeBuffer(totalQuadLights, quadStride);
+        sceneQuadLights = new RayQuad[totalQuadLights];
     }
 
     void FindSphereMeshes()
     {
         var sphereMeshes = FindObjectsByType<SphereMesh>();
         sceneSphereMeshes = sphereMeshes.ToList();
+    }
+
+    void FindSphereLights()
+    {
+        var sphLights = FindObjectsByType<RayTraceLight>();
+        rayTraceLights = sphLights.ToList();
+    }
+
+    void FindQuadLights()
+    {
+        var sphLights = FindObjectsByType<QuadLight>();
+        rayQuadLights = sphLights.ToList();
     }
 
     void FindQuadMeshes()
@@ -101,6 +126,7 @@ public class RayTracerManager : MonoBehaviour
         sphereMeshBuffers.Release();
         quadMeshBuffer.Release();
         sceneLightBuffers.Release();
+        sceneQuadLightBuffer.Release();
     }
 
     void Update()
@@ -138,10 +164,13 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetVector("cameraCenter", rayTracerCamera.Position);
         rayTracerCS.SetInt("iFrame", iFrame);
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
+        rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
+        rayTracerCS.SetFloat("c_minimumRayHitTime", minHitRayTime);
 
         UpdateSphereComputeBuffers();
         UpdateQuadComputeBuffers();
         UpdateSceneLight();
+        UpdateQuadLightBuffer();
 
         int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 8.0f);
         int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 8.0f);
@@ -150,8 +179,8 @@ public class RayTracerManager : MonoBehaviour
 
     void UpdateSceneLight()
     {
-        int totalSceneLights = 0;
-        if(rayTraceLight == null)
+        int totalSceneLights = rayTraceLights.Count;
+        if(totalSceneLights <= 0)
         {
             sceneLights[0].position = float3.zero;
             sceneLights[0].radius = 0;
@@ -159,15 +188,17 @@ public class RayTracerManager : MonoBehaviour
             sceneLights[0].emissive = float4.zero;
         }else
         {
-            sceneLights[0].position = rayTraceLight.Position;
-            sceneLights[0].radius = rayTraceLight.Radius;
-            // color drives the diffuse lighting, emissive is the color of the
-            // visible light sphere
-            sceneLights[0].color = new float4(rayTraceLight.Color.r, rayTraceLight.Color.g, rayTraceLight.Color.b, 1.0f);
-            sceneLights[0].emissive = new float4(rayTraceLight.Color.r, rayTraceLight.Color.g, rayTraceLight.Color.b, 1.0f);
-            sceneLights[0].emissive *= rayTraceLight.EmissiveMultiplier;
-
-            totalSceneLights = 1;
+            for(int i = 0; i < totalSceneLights; i++)
+            {
+                RayTraceLight qLight = rayTraceLights[i];
+                sceneLights[i].position = qLight.Position;
+                sceneLights[i].radius = qLight.Radius;
+                // color drives the diffuse lighting, emissive is the color of the
+                // visible light sphere
+                sceneLights[i].color = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                sceneLights[i].emissive = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                sceneLights[i].emissive *= qLight.EmissiveMultiplier;
+            }
         }
 
         sceneLightBuffers.SetData(sceneLights);
@@ -175,16 +206,62 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("totalSceneLightCount", totalSceneLights);
     }
 
+    void UpdateQuadLightBuffer()
+    {
+        int totalSceneLights = rayQuadLights.Count;
+        if(totalSceneLights <= 0)
+        {
+            sceneQuadLights[0].center_sizeX = float4.zero;
+            sceneQuadLights[0].normal_sizeY = float4.zero;
+            sceneQuadLights[0].tangent = float4.zero;
+            sceneQuadLights[0].bitangent = float4.zero;
+            sceneQuadLights[0].color = float4.zero;
+            sceneQuadLights[0].emissive = float4.zero;
+        }else
+        {
+            for(int i = 0; i < totalSceneLights; i++)
+            {
+                QuadLight qLight = rayQuadLights[i];
+                Transform qT = qLight.transform; 
+                Vector3 pos = qT.position;
+                Vector2 size = new Vector2(qT.localScale.x, qT.localScale.y);
+                sceneQuadLights[i].center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
+                Vector3 normal = qT.rotation * Vector3.back;
+                sceneQuadLights[i].normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
+                Vector3 tangent = qT.rotation * Vector3.right;
+                Vector3 biTangent = qT.rotation * Vector3.up;
+                sceneQuadLights[i].tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
+                sceneQuadLights[i].bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
+                sceneQuadLights[i].color = float4.zero;
+                sceneQuadLights[i].emissive = new float4(qLight.color.r, qLight.color.g, qLight.color.b, 1.0f);
+                sceneQuadLights[i].emissive *= qLight.explosion;
+            }
+        }
+
+        sceneQuadLightBuffer.SetData(sceneQuadLights);
+        rayTracerCS.SetBuffer(kernalHandle, "sceneQuadLights", sceneQuadLightBuffer);
+        rayTracerCS.SetInt("totalSceneQuadLightCount", totalSceneLights);
+    }
+
     void UpdateSphereComputeBuffers()
     {
         int totalItems = sceneSphereMeshes.Count;
-        for(int i = 0; i < totalItems; i++)
+        if(totalItems <= 0)
         {
-            SphereMesh sphMesh = sceneSphereMeshes[i];
-            sceneSpheres[i].position = sphMesh.GetPosition();
-            sceneSpheres[i].radius = sphMesh.GetRadius();
-            sceneSpheres[i].color = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
-            sceneSpheres[i].emissive = float4.zero;
+            sceneSpheres[0].position = float3.zero;
+            sceneSpheres[0].radius = 0.0f;
+            sceneSpheres[0].color = float4.zero;
+            sceneSpheres[0].emissive = float4.zero;
+        }else
+        {
+            for(int i = 0; i < totalItems; i++)
+            {
+                SphereMesh sphMesh = sceneSphereMeshes[i];
+                sceneSpheres[i].position = sphMesh.GetPosition();
+                sceneSpheres[i].radius = sphMesh.GetRadius();
+                sceneSpheres[i].color = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
+                sceneSpheres[i].emissive = float4.zero;
+            }
         }
 
         sphereMeshBuffers.SetData(sceneSpheres);
@@ -196,21 +273,32 @@ public class RayTracerManager : MonoBehaviour
     void UpdateQuadComputeBuffers()
     {
         int totalItems = sceneQuadMeshes.Count;
-        for(int i = 0; i < totalItems; i++)
+        if(totalItems <= 0)
         {
-            QuadMesh quadMesh = sceneQuadMeshes[i];
-            Transform qT = quadMesh.transform; 
-            Vector3 pos = qT.position;
-            Vector2 size = new Vector2(qT.localScale.x, qT.localScale.y);
-            sceneQuades[i].center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
-            Vector3 normal = qT.rotation * Vector3.back;
-            sceneQuades[i].normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
-            Vector3 tangent = qT.rotation * Vector3.right;
-            Vector3 biTangent = qT.rotation * Vector3.up;
-            sceneQuades[i].tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
-            sceneQuades[i].bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
-            sceneQuades[i].color = new float4(quadMesh.color.r, quadMesh.color.g, quadMesh.color.b, 1.0f);
-            sceneQuades[i].emissive = float4.zero;
+            sceneQuades[0].center_sizeX = float4.zero;
+            sceneQuades[0].normal_sizeY = float4.zero;
+            sceneQuades[0].tangent = float4.zero;
+            sceneQuades[0].bitangent = float4.zero;
+            sceneQuades[0].color = float4.zero;
+            sceneQuades[0].emissive = float4.zero;
+        }else
+        {
+            for(int i = 0; i < totalItems; i++)
+            {
+                QuadMesh quadMesh = sceneQuadMeshes[i];
+                Transform qT = quadMesh.transform; 
+                Vector3 pos = qT.position;
+                Vector2 size = new Vector2(qT.localScale.x, qT.localScale.y);
+                sceneQuades[i].center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
+                Vector3 normal = qT.rotation * Vector3.back;
+                sceneQuades[i].normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
+                Vector3 tangent = qT.rotation * Vector3.right;
+                Vector3 biTangent = qT.rotation * Vector3.up;
+                sceneQuades[i].tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
+                sceneQuades[i].bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
+                sceneQuades[i].color = new float4(quadMesh.color.r, quadMesh.color.g, quadMesh.color.b, 1.0f);
+                sceneQuades[i].emissive = float4.zero;
+            }
         }
         quadMeshBuffer.SetData(sceneQuades);
         rayTracerCS.SetBuffer(kernalHandle, "quadMeshes", quadMeshBuffer);
