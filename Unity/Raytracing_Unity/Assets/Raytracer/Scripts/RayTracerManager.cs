@@ -36,9 +36,10 @@ public class RayTracerManager : MonoBehaviour
 {
     public int rayBounceCount = 1;
     public int perPixelSampelCount = 1;
-    public float minHitRayTime = 0.01f;
     public RenderTexture renderTarget;
     public ComputeShader rayTracerCS;
+    public ComputeShader colorAccuCS;
+    public bool useAccumulationTexture = true;
 
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
@@ -51,6 +52,7 @@ public class RayTracerManager : MonoBehaviour
     private ComputeBuffer sceneQuadLightBuffer = null;
 
     int kernalHandle = -1;
+    int colorAccuKernalHandle = -1;
 
     RayTracerCamera rayTracerCamera;
 
@@ -59,6 +61,10 @@ public class RayTracerManager : MonoBehaviour
     RayQuad[] sceneQuades;
     RayLight[] sceneLights;
     RayQuad[] sceneQuadLights;
+
+    RenderTexture tempRenderTex;
+
+    public float4 defEmissive = new float4(1, 1, 1, 1);
 
     void Awake()
     {
@@ -71,6 +77,8 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCamera = Camera.main.GetComponent<RayTracerCamera>();
 
         InitializeBuffers();
+
+        tempRenderTex = new RenderTexture(renderTarget);
     }
 
     void InitializeBuffers()
@@ -127,6 +135,7 @@ public class RayTracerManager : MonoBehaviour
         quadMeshBuffer.Release();
         sceneLightBuffers.Release();
         sceneQuadLightBuffer.Release();
+        tempRenderTex.Release();
     }
 
     void Update()
@@ -137,8 +146,12 @@ public class RayTracerManager : MonoBehaviour
         if(kernalHandle == -1)
             kernalHandle = rayTracerCS.FindKernel("CSMain");
 
+        if(colorAccuKernalHandle == -1)
+            colorAccuKernalHandle = colorAccuCS.FindKernel("CSMain");
+
         CreateTextureIfRequired();
-        DispatchComputeShader();
+        DispatchRayTraceCS();
+        DispatchColorAccuCS();
 
         iFrame += 1;
     }
@@ -150,14 +163,23 @@ public class RayTracerManager : MonoBehaviour
             renderTarget.enableRandomWrite = true;
             renderTarget.Create();
         }
+
+        if(!tempRenderTex.IsCreated())
+        {
+            tempRenderTex.enableRandomWrite = true;
+            tempRenderTex.Create();
+        }
     }
 
-    void DispatchComputeShader()
+    void DispatchRayTraceCS()
     {
         if(kernalHandle == -1 || rayTracerCamera == null)
             return;
 
-        rayTracerCS.SetTexture(kernalHandle, "Result", renderTarget);
+        if(useAccumulationTexture)
+            rayTracerCS.SetTexture(kernalHandle, "Result", tempRenderTex);
+        else
+            rayTracerCS.SetTexture(kernalHandle, "Result", renderTarget);
         rayTracerCS.SetMatrix("_CameraToWorld", Camera.main.cameraToWorldMatrix);
         rayTracerCS.SetMatrix("_CameraInverseProjection", Camera.main.projectionMatrix.inverse);
         rayTracerCS.SetFloat("focalLength", rayTracerCamera.focalLength);
@@ -165,16 +187,38 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("iFrame", iFrame);
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
-        rayTracerCS.SetFloat("c_minimumRayHitTime", minHitRayTime);
 
         UpdateSphereComputeBuffers();
         UpdateQuadComputeBuffers();
         UpdateSceneLight();
         UpdateQuadLightBuffer();
 
+        if(useAccumulationTexture)
+        {
+            int dispatchX = Mathf.CeilToInt((float)tempRenderTex.width / 8.0f);
+            int dispatchY = Mathf.CeilToInt((float)tempRenderTex.height / 8.0f);
+            rayTracerCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
+        }else
+        {
+            int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 8.0f);
+            int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 8.0f);
+            rayTracerCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
+        }
+    }
+
+    void DispatchColorAccuCS()
+    {
+        if(!useAccumulationTexture)
+            return;
+
+        if(colorAccuKernalHandle == -1)
+            return;
+
+        colorAccuCS.SetTexture(colorAccuKernalHandle, "Result", renderTarget);
+        colorAccuCS.SetTexture(colorAccuKernalHandle, "SrcTarget", tempRenderTex);
         int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 8.0f);
         int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 8.0f);
-        rayTracerCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
+        colorAccuCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
     }
 
     void UpdateSceneLight()
@@ -222,19 +266,9 @@ public class RayTracerManager : MonoBehaviour
             for(int i = 0; i < totalSceneLights; i++)
             {
                 QuadLight qLight = rayQuadLights[i];
-                Transform qT = qLight.transform; 
-                Vector3 pos = qT.position;
-                Vector2 size = new Vector2(qT.localScale.x, qT.localScale.y);
-                sceneQuadLights[i].center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
-                Vector3 normal = qT.rotation * Vector3.back;
-                sceneQuadLights[i].normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
-                Vector3 tangent = qT.rotation * Vector3.right;
-                Vector3 biTangent = qT.rotation * Vector3.up;
-                sceneQuadLights[i].tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
-                sceneQuadLights[i].bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
-                sceneQuadLights[i].color = float4.zero;
-                sceneQuadLights[i].emissive = new float4(qLight.color.r, qLight.color.g, qLight.color.b, 1.0f);
-                sceneQuadLights[i].emissive *= qLight.explosion;
+                float4 emission = new float4(qLight.color.r, qLight.color.g, qLight.color.b, 1.0f);
+                emission *= qLight.explosion;
+                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.color, emission);
             }
         }
 
@@ -260,7 +294,7 @@ public class RayTracerManager : MonoBehaviour
                 sceneSpheres[i].position = sphMesh.GetPosition();
                 sceneSpheres[i].radius = sphMesh.GetRadius();
                 sceneSpheres[i].color = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
-                sceneSpheres[i].emissive = float4.zero;
+                sceneSpheres[i].emissive = defEmissive;
             }
         }
 
@@ -286,22 +320,28 @@ public class RayTracerManager : MonoBehaviour
             for(int i = 0; i < totalItems; i++)
             {
                 QuadMesh quadMesh = sceneQuadMeshes[i];
-                Transform qT = quadMesh.transform; 
-                Vector3 pos = qT.position;
-                Vector2 size = new Vector2(qT.localScale.x, qT.localScale.y);
-                sceneQuades[i].center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
-                Vector3 normal = qT.rotation * Vector3.back;
-                sceneQuades[i].normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
-                Vector3 tangent = qT.rotation * Vector3.right;
-                Vector3 biTangent = qT.rotation * Vector3.up;
-                sceneQuades[i].tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
-                sceneQuades[i].bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
-                sceneQuades[i].color = new float4(quadMesh.color.r, quadMesh.color.g, quadMesh.color.b, 1.0f);
-                sceneQuades[i].emissive = float4.zero;
+                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.color, defEmissive);
             }
         }
         quadMeshBuffer.SetData(sceneQuades);
         rayTracerCS.SetBuffer(kernalHandle, "quadMeshes", quadMeshBuffer);
         rayTracerCS.SetInt("quadMeshCount", totalItems);
+    }
+
+    RayQuad GetQuad(Transform t, Color color, float4 emission)
+    {
+        RayQuad quad;
+        Vector3 pos = t.position;
+        Vector2 size = new Vector2(t.localScale.x, t.localScale.y);
+        quad.center_sizeX =  new float4(pos.x, pos.y, pos.z, size.x);
+        Vector3 normal = -t.forward;
+        quad.normal_sizeY = new float4(normal.x, normal.y, normal.z, size.y);
+        Vector3 tangent = t.right;
+        Vector3 biTangent = t.up;
+        quad.tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
+        quad.bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
+        quad.color = new float4(color.r, color.g, color.b, 1.0f);
+        quad.emissive = emission;
+        return quad;
     }
 }
