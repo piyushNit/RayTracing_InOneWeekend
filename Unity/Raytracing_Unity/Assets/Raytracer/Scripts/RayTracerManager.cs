@@ -5,12 +5,18 @@ using Unity.Mathematics;
 using UnityEngine;
 
 [System.Serializable]
+struct Material
+{
+    public float4 albedo;
+    public float4 emissive;
+}
+
+[System.Serializable]
 struct RaySphere
 {
     public Vector3 position;
     public float radius;
-    public float4 color;
-    public float4 emissive;
+    public Material material;
 };
 
 [System.Serializable]
@@ -20,16 +26,14 @@ struct RayQuad
     public float4 normal_sizeY;
     public float4 tangent;   // xyz : Right direction of the quad, w : pad
     public float4 bitangent; // xyz : Up direction of the quad, w : pad
-    public float4 color;//xyz : color, w : pad
-    public float4 emissive;//xyz : color, w : pad
+    public Material material;
 };
 
 struct RayLight
 {
     public Vector3 position;
     public float radius;
-    public float4 color;
-    public float4 emissive;
+    public Material material;
 };
 
 public class RayTracerManager : MonoBehaviour
@@ -228,8 +232,10 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneLights[0].position = float3.zero;
             sceneLights[0].radius = 0;
-            sceneLights[0].color = float4.zero;
-            sceneLights[0].emissive = float4.zero;
+            Material material = new Material();
+            material.albedo = float4.zero;
+            material.emissive = float4.zero;
+            sceneLights[0].material = material;
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
@@ -239,9 +245,11 @@ public class RayTracerManager : MonoBehaviour
                 sceneLights[i].radius = qLight.Radius;
                 // color drives the diffuse lighting, emissive is the color of the
                 // visible light sphere
-                sceneLights[i].color = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
-                sceneLights[i].emissive = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
-                sceneLights[i].emissive *= qLight.EmissiveMultiplier;
+                Material material = new Material();
+                material.albedo = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                material.emissive = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                material.emissive *= qLight.EmissiveMultiplier;
+                sceneLights[i].material = material;
             }
         }
 
@@ -259,8 +267,10 @@ public class RayTracerManager : MonoBehaviour
             sceneQuadLights[0].normal_sizeY = float4.zero;
             sceneQuadLights[0].tangent = float4.zero;
             sceneQuadLights[0].bitangent = float4.zero;
-            sceneQuadLights[0].color = float4.zero;
-            sceneQuadLights[0].emissive = float4.zero;
+            Material material = new Material();
+            material.albedo = float4.zero;
+            material.emissive = float4.zero;
+            sceneQuadLights[0].material = material;
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
@@ -284,8 +294,10 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneSpheres[0].position = float3.zero;
             sceneSpheres[0].radius = 0.0f;
-            sceneSpheres[0].color = float4.zero;
-            sceneSpheres[0].emissive = float4.zero;
+            Material material = new Material();
+            material.albedo = float4.zero;
+            material.emissive = float4.zero;
+            sceneSpheres[0].material = material;
         }else
         {
             for(int i = 0; i < totalItems; i++)
@@ -293,8 +305,10 @@ public class RayTracerManager : MonoBehaviour
                 SphereMesh sphMesh = sceneSphereMeshes[i];
                 sceneSpheres[i].position = sphMesh.GetPosition();
                 sceneSpheres[i].radius = sphMesh.GetRadius();
-                sceneSpheres[i].color = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
-                sceneSpheres[i].emissive = defEmissive;
+                Material material = new Material();
+                material.albedo = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
+                material.emissive = defEmissive;
+                sceneSpheres[i].material = material;
             }
         }
 
@@ -313,8 +327,10 @@ public class RayTracerManager : MonoBehaviour
             sceneQuades[0].normal_sizeY = float4.zero;
             sceneQuades[0].tangent = float4.zero;
             sceneQuades[0].bitangent = float4.zero;
-            sceneQuades[0].color = float4.zero;
-            sceneQuades[0].emissive = float4.zero;
+            Material material = new Material();
+            material.albedo = float4.zero;
+            material.emissive = float4.zero;
+            sceneQuades[0].material = material;
         }else
         {
             for(int i = 0; i < totalItems; i++)
@@ -340,8 +356,10 @@ public class RayTracerManager : MonoBehaviour
         Vector3 biTangent = t.up;
         quad.tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
         quad.bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
-        quad.color = new float4(color.r, color.g, color.b, 1.0f);
-        quad.emissive = emission;
+        Material material = new Material();
+        material.albedo = new float4(color.r, color.g, color.b, 1.0f);
+        material.emissive = emission;
+        quad.material = material;
         return quad;
     }
 }

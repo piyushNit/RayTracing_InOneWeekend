@@ -6,22 +6,25 @@ const float c_minimumRayHitTime = 0.01f;
 
 const float c_pi = 3.14159265359f;
 const float c_twopi = 2.0f * 3.14159265359f;
-const float c_superFar = 10000000.0f;
+
+struct Material
+{
+    float4 albedo;
+    float4 emissive;
+};
 
 struct Light
 {
     float3 position;
     float radius;
-    float4 color;
-    float4 emissive;
+    Material material;
 };
 
 struct Sphere
 {
     float3 position;
     float radius;
-    float4 color;   //xyz : color, w : pad
-    float4 emissive;//xyz : color, w : pad
+    Material material;
 };
 
 struct Quad
@@ -30,8 +33,7 @@ struct Quad
     float4 normal_sizeY;
     float4 tangent;   // xyz : Right direction of the quad, w : pad
     float4 bitangent; // xyz : Up direction of the quad, w : pad
-    float4 color;//xyz : color, w : pad
-    float4 emissive;//xyz : color, w : pad
+    Material material;
 };
 
 struct Ray
@@ -42,10 +44,10 @@ struct Ray
 
 struct RayHitInfo
 {
+    bool didHit;
     float dist;
     float3 normal;
-    float3 albedo;
-    float3 emissive;
+    Material material;
 };
 
 float3 ray_at(float t, in Ray ray)
@@ -154,12 +156,12 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, uint rngS
     float halfWidth = size.x * 0.5f;
     float halfHeight = size.y * 0.5f;
 
-    if (abs(localX) <= halfWidth && abs(localY) <= halfHeight)
+    if (abs(localX) <= halfWidth && abs(localY) <= halfHeight && t < hitInfo.dist)
     {
+        hitInfo.didHit = true;
         hitInfo.dist = t;
         hitInfo.normal = normal;//random_on_hemisphere(normal, rngState);
-        hitInfo.albedo = quad.color.xyz;
-        hitInfo.emissive = quad.emissive.xyz;
+        hitInfo.material = quad.material;
         return true; // Hit!
     }
 
@@ -168,8 +170,6 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, uint rngS
 
 bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, uint rngState)
 {
-
-
 	float3 m = ray.origin - sphere.position;
 	float b = dot(m, ray.dir);
 	float c = dot(m, m) - sphere.radius * sphere.radius;
@@ -189,15 +189,15 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, uint r
         dist = -b + sqrt(discr);
     }
     
-	if (dist > c_minimumRayHitTime)
+	if (dist > c_minimumRayHitTime && dist < info.dist)
     {
-        info.dist = dist;        
+        info.didHit = true;
+        info.dist = dist;
         float3 normal = normalize(ray_at(info.dist, ray) - sphere.position) * (fromInside ? -1.0f : 1.0f);
         //float3 normal = normalize(ray_at(info.dist, ray) - sphere.position);
         //info.normal = 0.5 * float3(normal.x + 1, normal.y + 1, normal.z + 1);//random_on_hemisphere(normal, rngState);
         info.normal = normal;
-        info.albedo = sphere.color.xyz;
-        info.emissive = sphere.emissive.xyz;
+        info.material = sphere.material;
         return true;
     }
 
@@ -224,20 +224,20 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
         }
     }
 
-    if(totalSceneLightCount > 0)
-    {
-        for(int i = 0; i < totalSceneLightCount; i++)
-        {
-            // Test with lights
-            Light sceneLight = sceneLights[i];
-            Sphere lightSph;
-            lightSph.position = sceneLight.position;
-            lightSph.radius = sceneLight.radius;
-            lightSph.color = sceneLight.color;
-            lightSph.emissive = sceneLight.emissive;
-            TestSphereTrace(ray, hitInfo, lightSph, rngState);
-        }
-    }
+    // if(totalSceneLightCount > 0)
+    // {
+    //     for(int i = 0; i < totalSceneLightCount; i++)
+    //     {
+    //         // Test with lights
+    //         Light sceneLight = sceneLights[i];
+    //         Sphere lightSph;
+    //         lightSph.position = sceneLight.position;
+    //         lightSph.radius = sceneLight.radius;
+    //         lightSph.color = sceneLight.color;
+    //         lightSph.emissive = sceneLight.emissive;
+    //         TestSphereTrace(ray, hitInfo, lightSph, rngState);
+    //     }
+    // }
 
     // Test with all the spheres
     for(int i = 0; i < sphereMeshCount; i++)
@@ -247,6 +247,24 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
         {
         }
     }
+}
+
+void updateDiffuseMaterial(in Material mat, inout float3 color, inout float3 throughput)
+{
+    throughput *= mat.albedo;
+    color += mat.emissive * throughput;
+}
+
+void updateRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
+{
+    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    rayDir = random_on_hemisphere(hitInfo.normal, rngState);
+}
+
+void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 color, inout float3 throughput, inout uint rngState)
+{
+    updateDiffuseMaterial(hitInfo.material, color, throughput);
+    updateRay(hitInfo, ray, rayOrigin, rayDir, rngState);
 }
 
 float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
@@ -261,6 +279,8 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
 
     int totalFound = 1;
 
+    RayHitInfo closestHit = (RayHitInfo)0;
+
     for(int iBounce = 0; iBounce < rayBounceCount; iBounce++)
     {
         Ray newRay;
@@ -268,25 +288,16 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
         newRay.dir = rayDir;
 
         RayHitInfo hitInfo;
-        hitInfo.dist = c_superFar;
+        hitInfo.dist = 1.#INF;
 
         TestInTheScene(newRay, hitInfo, rngState);
 
-        if(hitInfo.dist == c_superFar)
+        if(hitInfo.didHit)
         {
-            break;
+            updateCurrState(hitInfo, newRay, rayOrigin, rayDir, color, throughput, rngState);
+            found = true;
+            totalFound++;
         }
-
-        throughput *= hitInfo.albedo;
-        color += hitInfo.emissive * throughput;
-        found = true;
-        totalFound++;
-
-        //color = hitInfo.normal;
-
-        rayOrigin = ray_at(hitInfo.dist, newRay) + hitInfo.normal * c_rayPosNormalNudge;
-        //rayDir = normalize(hitInfo.normal + random_on_hemisphere(hitInfo.normal, rngState));
-        rayDir = random_on_hemisphere(hitInfo.normal, rngState);
     }
     color /= (float)totalFound;
 
