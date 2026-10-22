@@ -14,6 +14,28 @@ struct Material
 }
 
 [System.Serializable]
+public struct Triangle
+{
+    public float3 v0;
+    public float3 v1;
+    public float3 v2;
+
+    public float3 n0;
+    public float3 n1;
+    public float3 n2;
+};
+
+[System.Serializable]
+struct MeshInfo
+{
+    public uint triIndexStart;
+    public uint triCount;
+    public float3 boundMin;
+    public float3 boundMax;
+    public Material material;
+};
+
+[System.Serializable]
 struct RaySphere
 {
     public Vector3 position;
@@ -54,11 +76,14 @@ public class RayTracerManager : MonoBehaviour
     private List<QuadMesh> sceneQuadMeshes;
     private List<RayTraceLight> rayTraceLights;
     private List<QuadLight> rayQuadLights;
+    private List<MeshTriangle> meshTriangleList;
 
     private ComputeBuffer sphereMeshBuffers = null;
     private ComputeBuffer quadMeshBuffer = null;
     private ComputeBuffer sceneLightBuffers = null;
     private ComputeBuffer sceneQuadLightBuffer = null;
+    private ComputeBuffer triangleListBuffer = null;
+    private ComputeBuffer meshListBuffer = null;
 
     int kernalHandle = -1;
     int colorAccuKernalHandle = -1;
@@ -73,8 +98,6 @@ public class RayTracerManager : MonoBehaviour
 
     RenderTexture tempRenderTex;
 
-    public float4 defEmissive = new float4(1, 1, 1, 1);
-
     void Awake()
     {
         FindSphereMeshes();
@@ -82,6 +105,8 @@ public class RayTracerManager : MonoBehaviour
 
         FindSphereLights();
         FindQuadLights();
+
+        FindMeshTriangles();
 
         rayTracerCamera = Camera.main.GetComponent<RayTracerCamera>();
 
@@ -96,6 +121,7 @@ public class RayTracerManager : MonoBehaviour
         int totalQuads = Mathf.Max(sceneQuadMeshes.Count, 1);
         int totalShpLight = Mathf.Max(rayTraceLights.Count, 1);
         int totalQuadLights = Mathf.Max(rayQuadLights.Count, 1);
+        int totalMeshCount = Mathf.Max(meshTriangleList.Count, 1);
 
         sceneSpheres = new RaySphere[totalItems];
         sceneQuades = new RayQuad[totalQuads];
@@ -112,6 +138,17 @@ public class RayTracerManager : MonoBehaviour
 
         sceneQuadLightBuffer = new ComputeBuffer(totalQuadLights, quadStride);
         sceneQuadLights = new RayQuad[totalQuadLights];
+
+        int triangleCount = 0;
+        foreach(var mesh in meshTriangleList)
+        {
+            triangleCount += mesh.TriangleCount;
+        }
+        int triangleStride = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Triangle));
+        triangleListBuffer = new ComputeBuffer(Mathf.Max(triangleCount, 1), triangleStride);
+
+        int meshStride = System.Runtime.InteropServices.Marshal.SizeOf(typeof(MeshInfo));
+        meshListBuffer = new ComputeBuffer(totalMeshCount, meshStride);
     }
 
     void FindSphereMeshes()
@@ -138,12 +175,20 @@ public class RayTracerManager : MonoBehaviour
         sceneQuadMeshes = quadMeshes.ToList();
     }
 
+    void FindMeshTriangles()
+    {
+        var meshTriangles = FindObjectsByType<MeshTriangle>();
+        meshTriangleList = meshTriangles.ToList();
+    }
+
     private void OnDestroy()
     {
         sphereMeshBuffers.Release();
         quadMeshBuffer.Release();
         sceneLightBuffers.Release();
         sceneQuadLightBuffer.Release();
+        triangleListBuffer.Release();
+        meshListBuffer.Release();
         tempRenderTex.Release();
     }
 
@@ -203,6 +248,7 @@ public class RayTracerManager : MonoBehaviour
         UpdateQuadComputeBuffers();
         UpdateSceneLight();
         UpdateQuadLightBuffer();
+        UpdateTriangleBuffer();
 
         if(useAccumulationTexture)
         {
@@ -382,5 +428,67 @@ public class RayTracerManager : MonoBehaviour
         material.emissiveStrength = emissiveStrength;
         quad.material = material;
         return quad;
+    }
+
+    void UpdateTriangleBuffer()
+    {
+        int totalTriangleCount = 0;
+        int totalMeshCount = meshTriangleList.Count;
+        if(totalMeshCount <= 0)
+        {
+            Triangle[] triList = new Triangle[1];
+            triList[0].v0 = float3.zero;
+            triList[0].v1 = float3.zero;
+            triList[0].v2 = float3.zero;
+            triList[0].n0 = float3.zero;
+            triList[0].n1 = float3.zero;
+            triList[0].n2 = float3.zero;
+            triangleListBuffer.SetData(triList);
+
+            MeshInfo[] meshInfo = new MeshInfo[1];
+            meshInfo[0].triIndexStart = 0;
+            meshInfo[0].triCount = 0;
+            meshInfo[0].boundMin = float3.zero;
+            meshInfo[0].boundMax = float3.zero;
+            meshInfo[0].material = new Material();
+            meshListBuffer.SetData(meshInfo);
+        }else
+        {
+            int triStartIndex = 0;
+            MeshInfo[] meshInfoList = new MeshInfo[totalMeshCount];
+            List<Triangle> trianglList = new List<Triangle>();
+            for(int i = 0; i < totalMeshCount; i++)
+            {
+                MeshTriangle mesh = meshTriangleList[i];
+                MeshInfo meshInfo = new MeshInfo();
+                meshInfo.triIndexStart = (uint)triStartIndex;
+                List<Triangle> triangles = mesh.GetTriangleList();
+                trianglList.AddRange(triangles);
+
+                meshInfo.triCount = (uint)triangles.Count;
+                float3 minBound, maxBound;
+                mesh.GetMinMaxBounds(out minBound, out maxBound);
+
+                meshInfo.boundMin = minBound;
+                meshInfo.boundMax = maxBound;
+
+                Material material = new Material();
+                material.albedo = new float3(mesh.Color.r, mesh.Color.g, mesh.Color.b);
+                material.emissive = new float3(mesh.Emission.r, mesh.Emission.g, mesh.Emission.b);
+                material.emissiveStrength = mesh.EmissionStrength;
+                meshInfo.material = material;
+                meshInfoList[i] = meshInfo;
+                triStartIndex += triangles.Count;
+            }
+
+            totalTriangleCount = trianglList.Count;
+            triangleListBuffer.SetData(trianglList.ToArray());
+            meshListBuffer.SetData(meshInfoList);
+        }
+
+        rayTracerCS.SetBuffer(kernalHandle, "triangleList", triangleListBuffer);
+        rayTracerCS.SetInt("totalTriangleCount", totalTriangleCount);
+        rayTracerCS.SetInt("totalMeshCount", totalMeshCount);
+        rayTracerCS.SetBuffer(kernalHandle, "meshList", meshListBuffer);
     }
 }

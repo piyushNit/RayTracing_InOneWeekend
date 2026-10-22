@@ -1,11 +1,11 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
-const float c_rayPosNormalNudge = 0.01f;
-const float c_minimumRayHitTime = 0.01f;
+static const float c_rayPosNormalNudge = 0.01f;
+static const float c_minimumRayHitTime = 0.01f;
 
-const float c_pi = 3.14159265359f;
-const float c_twopi = 2.0f * 3.14159265359f;
+static const float c_pi = 3.14159265359f;
+static const float c_twopi = 2.0f * 3.14159265359f;
 
 struct Material
 {
@@ -14,6 +14,26 @@ struct Material
 
     float3 emissive;
     float emissiveStrength;
+};
+
+struct Triangle
+{
+    float3 v0;
+    float3 v1;
+    float3 v2;
+
+    float3 n0;
+    float3 n1;
+    float3 n2;
+};
+
+struct MeshInfo
+{
+    uint triIndexStart;
+    uint triCount;
+    float3 boundMin;
+    float3 boundMax;
+    Material material;
 };
 
 struct Light
@@ -121,6 +141,12 @@ int totalSceneLightCount;
 StructuredBuffer<Quad> sceneQuadLights;
 int totalSceneQuadLightCount;
 
+StructuredBuffer<Triangle> triangleList;
+int totalTriangleCount;
+
+StructuredBuffer<MeshInfo> meshList;
+int totalMeshCount;
+
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
 float3 cameraCenter;
@@ -137,6 +163,47 @@ float SkyColorApplyRatio = 1.0f;
 float ScalarTriple(float3 u, float3 v, float3 w)
 {
     return dot(cross(u, v), w);
+}
+
+bool IntersectTriangle(in Ray ray, in Triangle tri, in Material mat, inout RayHitInfo hitInfo)
+{
+    float t = 0;
+    float u = 0;
+    float v = 0;
+
+    float3 edge1 = tri.v1 - tri.v0;
+    float3 edge2 = tri.v2 - tri.v0;
+
+    float3 pvec = cross(ray.dir, edge2);
+    float det = dot(edge1, pvec);
+
+    if (abs(det) < 1e-8)
+        return false;
+
+    float invDet = 1.0 / det;
+
+    float3 tvec = ray.origin - tri.v0;
+    u = dot(tvec, pvec) * invDet;
+    if (u < 0.0 || u > 1.0)
+        return false;
+
+    float3 qvec = cross(tvec, edge1);
+    v = dot(ray.dir, qvec) * invDet;
+    if (v < 0.0 || u + v > 1.0)
+        return false;
+
+    float w = 1 - u - v;
+
+    t = dot(edge2, qvec) * invDet;
+    if (t > c_minimumRayHitTime && t < hitInfo.dist)
+    {
+        hitInfo.didHit = true;
+        hitInfo.dist = t;
+        hitInfo.normal = normalize(tri.n0 * w + tri.n1 * u + tri.n2 * v);
+        hitInfo.material = mat;
+        return true;
+    }
+    return false;
 }
 
 bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, inout uint rngState)
@@ -166,8 +233,6 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, inout uin
     {
         hitInfo.didHit = true;
         hitInfo.dist = t;
-        //float3 normal = normalize(ray_at(hitInfo.dist, ray) - quad.center_sizeX.xyz);
-        //hitInfo.normal = normal;
         hitInfo.normal = random_on_hemisphere(quad.normal_sizeY.xyz, rngState);
         hitInfo.material = quad.material;
         return true; // Hit!
@@ -210,37 +275,77 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, inout 
     return false;
 }
 
+// Slab test: returns true if the ray hits the AABB closer than maxDist
+bool IntersectAABB(in Ray ray, in float3 boundMin, in float3 boundMax, in float maxDist)
+{
+    float3 invDir = 1.0f / ray.dir;
+    float3 t0 = (boundMin - ray.origin) * invDir;
+    float3 t1 = (boundMax - ray.origin) * invDir;
+
+    float3 tSmall = min(t0, t1);
+    float3 tBig = max(t0, t1);
+
+    float tNear = max(max(tSmall.x, tSmall.y), tSmall.z);
+    float tFar = min(min(tBig.x, tBig.y), tBig.z);
+
+    return tNear <= tFar && tFar >= 0.0f && tNear < maxDist;
+}
+
+void TestIntersecrtionForMesh(in Ray ray, inout RayHitInfo hitInfo, in int triStart, in int triEnd, in Material mat)
+{
+    for(int i = triStart; i < triEnd; i++)
+    {
+        Triangle tri = triangleList[i];
+        IntersectTriangle(ray, tri, mat, hitInfo);
+    }
+}
+
 void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 {
-    if(quadMeshCount > 0)
-    {
-        for(int i = 0; i < quadMeshCount; i++)
-        {
-            Quad quad = quadMeshes[i];
-            IntersectQuad(ray, quad, hitInfo, rngState);
-        }
-    }
+    // if(quadMeshCount > 0)
+    // {
+    //     for(int i = 0; i < quadMeshCount; i++)
+    //     {
+    //         Quad quad = quadMeshes[i];
+    //         IntersectQuad(ray, quad, hitInfo, rngState);
+    //     }
+    // }
 
-    if(totalSceneQuadLightCount > 0)
-    {
-        for(int i = 0; i < totalSceneQuadLightCount; i++)
-        {
-            Quad quad = sceneQuadLights[i];
-            IntersectQuad(ray, quad, hitInfo, rngState);
-        }
-    }
+    // if(totalSceneQuadLightCount > 0)
+    // {
+    //     for(int i = 0; i < totalSceneQuadLightCount; i++)
+    //     {
+    //         Quad quad = sceneQuadLights[i];
+    //         IntersectQuad(ray, quad, hitInfo, rngState);
+    //     }
+    // }
 
-    if(totalSceneLightCount > 0)
+    // if(totalSceneLightCount > 0)
+    // {
+    //     for(int i = 0; i < totalSceneLightCount; i++)
+    //     {
+    //         // Test with lights
+    //         Light sceneLight = sceneLights[i];
+    //         Sphere lightSph;
+    //         lightSph.position = sceneLight.position;
+    //         lightSph.radius = sceneLight.radius;
+    //         lightSph.material = sceneLight.material;
+    //         TestSphereTrace(ray, hitInfo, lightSph, rngState);
+    //     }
+    // }
+
+    if(totalMeshCount > 0 && totalTriangleCount > 0)
     {
-        for(int i = 0; i < totalSceneLightCount; i++)
+        for(int iMesh = 0; iMesh < totalMeshCount; iMesh++)
         {
-            // Test with lights
-            Light sceneLight = sceneLights[i];
-            Sphere lightSph;
-            lightSph.position = sceneLight.position;
-            lightSph.radius = sceneLight.radius;
-            lightSph.material = sceneLight.material;
-            TestSphereTrace(ray, hitInfo, lightSph, rngState);
+            MeshInfo meshInfo = meshList[iMesh];
+            // Skip the mesh if the ray misses its bounds (or hits them behind the closest hit so far)
+            if(!IntersectAABB(ray, meshInfo.boundMin, meshInfo.boundMax, hitInfo.dist))
+                continue;
+
+            int triangleStart = meshInfo.triIndexStart;
+            int triangleEnd = triangleStart + meshInfo.triCount;
+            TestIntersecrtionForMesh(ray, hitInfo, triangleStart, triangleEnd, meshInfo.material);
         }
     }
 
