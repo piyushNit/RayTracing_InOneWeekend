@@ -9,7 +9,9 @@ const float c_twopi = 2.0f * 3.14159265359f;
 
 struct Material
 {
-    float4 albedo;
+    int matType;
+    float3 albedo;
+
     float3 emissive;
     float emissiveStrength;
 };
@@ -129,12 +131,15 @@ int iFrame;
 
 int perPixelSampleCount = 1;
 
+uint ApplySkyBoxColor = 1;
+float SkyColorApplyRatio = 1.0f;
+
 float ScalarTriple(float3 u, float3 v, float3 w)
 {
     return dot(cross(u, v), w);
 }
 
-bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, uint rngState)
+bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, inout uint rngState)
 {
     float3 center = quad.center_sizeX.xyz;
     float3 normal = quad.normal_sizeY.xyz;
@@ -161,7 +166,9 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, uint rngS
     {
         hitInfo.didHit = true;
         hitInfo.dist = t;
-        hitInfo.normal = normal;//random_on_hemisphere(normal, rngState);
+        //float3 normal = normalize(ray_at(hitInfo.dist, ray) - quad.center_sizeX.xyz);
+        //hitInfo.normal = normal;
+        hitInfo.normal = random_on_hemisphere(quad.normal_sizeY.xyz, rngState);
         hitInfo.material = quad.material;
         return true; // Hit!
     }
@@ -169,7 +176,7 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, uint rngS
     return false;
 }
 
-bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, uint rngState)
+bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, inout uint rngState)
 {
 	float3 m = ray.origin - sphere.position;
 	float b = dot(m, ray.dir);
@@ -195,8 +202,6 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, uint r
         info.didHit = true;
         info.dist = dist;
         float3 normal = normalize(ray_at(info.dist, ray) - sphere.position) * (fromInside ? -1.0f : 1.0f);
-        //float3 normal = normalize(ray_at(info.dist, ray) - sphere.position);
-        //info.normal = 0.5 * float3(normal.x + 1, normal.y + 1, normal.z + 1);//random_on_hemisphere(normal, rngState);
         info.normal = normal;
         info.material = sphere.material;
         return true;
@@ -205,7 +210,7 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, uint r
     return false;
 }
 
-void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
+void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 {
     if(quadMeshCount > 0)
     {
@@ -225,20 +230,19 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
         }
     }
 
-    // if(totalSceneLightCount > 0)
-    // {
-    //     for(int i = 0; i < totalSceneLightCount; i++)
-    //     {
-    //         // Test with lights
-    //         Light sceneLight = sceneLights[i];
-    //         Sphere lightSph;
-    //         lightSph.position = sceneLight.position;
-    //         lightSph.radius = sceneLight.radius;
-    //         lightSph.color = sceneLight.color;
-    //         lightSph.emissive = sceneLight.emissive;
-    //         TestSphereTrace(ray, hitInfo, lightSph, rngState);
-    //     }
-    // }
+    if(totalSceneLightCount > 0)
+    {
+        for(int i = 0; i < totalSceneLightCount; i++)
+        {
+            // Test with lights
+            Light sceneLight = sceneLights[i];
+            Sphere lightSph;
+            lightSph.position = sceneLight.position;
+            lightSph.radius = sceneLight.radius;
+            lightSph.material = sceneLight.material;
+            TestSphereTrace(ray, hitInfo, lightSph, rngState);
+        }
+    }
 
     // Test with all the spheres
     for(int i = 0; i < sphereMeshCount; i++)
@@ -269,7 +273,14 @@ void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, 
     updateRay(hitInfo, ray, rayOrigin, rayDir, rngState);
 }
 
-float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
+float3 GetEnvironmentLight(in float3 rayDir)
+{
+    float3 unit_direction = normalize(rayDir);
+    float a = 0.5 * (unit_direction.y + 1.0f);
+    return lerp(float3(1.0, 1.0, 1.0), float3(0.5, 0.7, 1.0), a);
+}
+
+float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
 {
     float3 incomingLight = 0;
     float3 rayColor = 1;
@@ -281,15 +292,13 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
 
     int totalFound = 1;
 
-    RayHitInfo closestHit = (RayHitInfo)0;
-
     for(int iBounce = 0; iBounce < rayBounceCount; iBounce++)
     {
-        Ray newRay;
+        Ray newRay = (Ray)0;
         newRay.origin = rayOrigin;
         newRay.dir = rayDir;
 
-        RayHitInfo hitInfo;
+        RayHitInfo hitInfo = (RayHitInfo)0;
         hitInfo.dist = 1.#INF;
 
         TestInTheScene(newRay, hitInfo, rngState);
@@ -299,17 +308,18 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
             updateCurrState(hitInfo, newRay, rayOrigin, rayDir, incomingLight, rayColor, rngState);
             found = true;
             totalFound++;
+        }else
+        {
+            incomingLight += ApplySkyBoxColor ? GetEnvironmentLight(newRay.dir) * saturate(SkyColorApplyRatio) : (float3)0;
+            break;
         }
     }
 
-    #if 0 // draw sky
-    incomingLight /= (float)totalFound;
+    #if 1 // draw sky
+    //incomingLight /= (float)totalFound;
     if(found)
         return incomingLight;
-
-    float3 unit_direction = normalize(rayDir);
-    float a = 0.5 * (unit_direction.y + 1.0f);
-    return lerp(float3(1.0, 1.0, 1.0), float3(0.5, 0.7, 1.0), a);
+    return GetEnvironmentLight(rayDir);
     #else
         return incomingLight;
     #endif

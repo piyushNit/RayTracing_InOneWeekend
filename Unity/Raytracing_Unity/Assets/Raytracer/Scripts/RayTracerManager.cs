@@ -7,7 +7,8 @@ using UnityEngine;
 [System.Serializable]
 struct Material
 {
-    public float4 albedo;
+    public int matType;
+    public float3 albedo;
     public float3 emissive;
     public float emissiveStrength;
 }
@@ -45,6 +46,9 @@ public class RayTracerManager : MonoBehaviour
     public ComputeShader rayTracerCS;
     public ComputeShader colorAccuCS;
     public bool useAccumulationTexture = true;
+    public bool applySkyboxColor = true;
+    [Range(0.0f, 1.0f)]
+    public float skyColorApplyRatio = 1.0f;
 
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
@@ -192,6 +196,8 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("iFrame", iFrame);
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
+        rayTracerCS.SetInt("ApplySkyBoxColor", applySkyboxColor ? 1 : 0);
+        rayTracerCS.SetFloat("SkyColorApplyRatio", skyColorApplyRatio);
 
         UpdateSphereComputeBuffers();
         UpdateQuadComputeBuffers();
@@ -221,6 +227,7 @@ public class RayTracerManager : MonoBehaviour
 
         colorAccuCS.SetTexture(colorAccuKernalHandle, "Result", renderTarget);
         colorAccuCS.SetTexture(colorAccuKernalHandle, "SrcTarget", tempRenderTex);
+        colorAccuCS.SetFloat("deltaTime", Time.deltaTime);
         int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 8.0f);
         int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 8.0f);
         colorAccuCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
@@ -234,7 +241,8 @@ public class RayTracerManager : MonoBehaviour
             sceneLights[0].position = float3.zero;
             sceneLights[0].radius = 0;
             Material material = new Material();
-            material.albedo = float4.zero;
+            material.matType = 0;
+            material.albedo = float3.zero;
             material.emissive = float3.zero;
             material.emissiveStrength = 0;
             sceneLights[0].material = material;
@@ -248,7 +256,8 @@ public class RayTracerManager : MonoBehaviour
                 // color drives the diffuse lighting, emissive is the color of the
                 // visible light sphere
                 Material material = new Material();
-                material.albedo = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                material.matType = 0;
+                material.albedo = new float3(qLight.Color.r, qLight.Color.g, qLight.Color.b);
                 material.emissive = new float3(qLight.Emissive.r, qLight.Emissive.g, qLight.Emissive.b);
                 material.emissive = qLight.emissiveStrength;
                 material.emissive *= qLight.EmissiveMultiplier;
@@ -271,7 +280,8 @@ public class RayTracerManager : MonoBehaviour
             sceneQuadLights[0].tangent = float4.zero;
             sceneQuadLights[0].bitangent = float4.zero;
             Material material = new Material();
-            material.albedo = float4.zero;
+            material.matType = 0;
+            material.albedo = float3.zero;
             material.emissive = float3.zero;
             material.emissiveStrength = 0;
             sceneQuadLights[0].material = material;
@@ -280,7 +290,7 @@ public class RayTracerManager : MonoBehaviour
             for(int i = 0; i < totalSceneLights; i++)
             {
                 QuadLight qLight = rayQuadLights[i];
-                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.Color, qLight.Emissive, qLight.emissiveStrength);
+                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.MaterialType, qLight.Color, qLight.Emission, qLight.EmissionStrength);
             }
         }
 
@@ -297,7 +307,8 @@ public class RayTracerManager : MonoBehaviour
             sceneSpheres[0].position = float3.zero;
             sceneSpheres[0].radius = 0.0f;
             Material material = new Material();
-            material.albedo = float4.zero;
+            material.matType = 0;
+            material.albedo = float3.zero;
             material.emissive = float3.zero;
             material.emissiveStrength = 0;
             sceneSpheres[0].material = material;
@@ -309,7 +320,8 @@ public class RayTracerManager : MonoBehaviour
                 sceneSpheres[i].position = sphMesh.GetPosition();
                 sceneSpheres[i].radius = sphMesh.GetRadius();
                 Material material = new Material();
-                material.albedo = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
+                material.matType = (int)sphMesh.MaterialType;
+                material.albedo = new float3(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b);
                 material.emissive = new float3(sphMesh.Emission.r, sphMesh.Emission.g, sphMesh.Emission.b);
                 material.emissiveStrength = sphMesh.EmissionStrength;
                 sceneSpheres[i].material = material;
@@ -332,7 +344,9 @@ public class RayTracerManager : MonoBehaviour
             sceneQuades[0].tangent = float4.zero;
             sceneQuades[0].bitangent = float4.zero;
             Material material = new Material();
-            material.albedo = float4.zero;
+            material.matType = 0;
+            material.matType = 0;
+            material.albedo = float3.zero;
             material.emissive = float3.zero;
             material.emissiveStrength = 0;
             sceneQuades[0].material = material;
@@ -341,7 +355,7 @@ public class RayTracerManager : MonoBehaviour
             for(int i = 0; i < totalItems; i++)
             {
                 QuadMesh quadMesh = sceneQuadMeshes[i];
-                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.color, Color.black, 0);
+                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.MaterialType, quadMesh.Color, Color.black, 0);
             }
         }
         quadMeshBuffer.SetData(sceneQuades);
@@ -349,7 +363,7 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("quadMeshCount", totalItems);
     }
 
-    RayQuad GetQuad(Transform t, Color color, Color emission, float emissiveStrength)
+    RayQuad GetQuad(Transform t, MaterialType matType, Color color, Color emission, float emissiveStrength)
     {
         RayQuad quad;
         Vector3 pos = t.position;
@@ -362,7 +376,8 @@ public class RayTracerManager : MonoBehaviour
         quad.tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
         quad.bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
         Material material = new Material();
-        material.albedo = new float4(color.r, color.g, color.b, 1.0f);
+        material.matType = (int)matType;
+        material.albedo = new float3(color.r, color.g, color.b);
         material.emissive = new float3(emission.r, emission.g, emission.b);
         material.emissiveStrength = emissiveStrength;
         quad.material = material;

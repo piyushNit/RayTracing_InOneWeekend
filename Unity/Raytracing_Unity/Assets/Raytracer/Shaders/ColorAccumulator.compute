@@ -6,6 +6,8 @@
 RWTexture2D<float4> Result;
 RWTexture2D<float4> SrcTarget;
 
+float deltaTime;
+
 [numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
@@ -15,5 +17,5 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
     float4 colorA = Result[id.xy];
     float4 colorB = SrcTarget[id.xy];
-    Result[id.xy] =  (colorA + colorB) / 2.0f;
+    Result[id.xy] =  lerp(colorA, colorB, deltaTime);
 }
