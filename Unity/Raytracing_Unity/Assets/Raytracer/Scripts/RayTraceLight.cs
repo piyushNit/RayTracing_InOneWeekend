@@ -6,4 +6,6 @@ public class RayTraceLight : MonoBehaviour
     public Vector3 Position { get=>transform.position; }
     public float Radius = 5;
     public Color Color = Color.white;
+    public Color Emissive = Color.white;
+    public float emissiveStrength = 1;
 }

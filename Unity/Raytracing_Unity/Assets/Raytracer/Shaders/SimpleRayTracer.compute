@@ -10,7 +10,8 @@ const float c_twopi = 2.0f * 3.14159265359f;
 struct Material
 {
     float4 albedo;
-    float4 emissive;
+    float3 emissive;
+    float emissiveStrength;
 };
 
 struct Light
@@ -249,10 +250,11 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, uint rngState)
     }
 }
 
-void updateDiffuseMaterial(in Material mat, inout float3 color, inout float3 throughput)
+void updateDiffuseMaterial(in Material mat, inout float3 incomingLight, inout float3 rayColor)
 {
-    throughput *= mat.albedo;
-    color += mat.emissive * throughput;
+    float3 emittedLight = mat.emissive * mat.emissiveStrength;
+    incomingLight += emittedLight * rayColor;
+    rayColor *= mat.albedo;
 }
 
 void updateRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
@@ -261,16 +263,16 @@ void updateRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout 
     rayDir = random_on_hemisphere(hitInfo.normal, rngState);
 }
 
-void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 color, inout float3 throughput, inout uint rngState)
+void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 incomingLight, inout float3 rayColor, inout uint rngState)
 {
-    updateDiffuseMaterial(hitInfo.material, color, throughput);
+    updateDiffuseMaterial(hitInfo.material, incomingLight, rayColor);
     updateRay(hitInfo, ray, rayOrigin, rayDir, rngState);
 }
 
 float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
 {
-    float3 color = float3(0, 0, 0);
-    float3 throughput = float3(1, 1, 1);
+    float3 incomingLight = 0;
+    float3 rayColor = 1;
 
     bool found = false;
 
@@ -294,22 +296,22 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, uint rngState)
 
         if(hitInfo.didHit)
         {
-            updateCurrState(hitInfo, newRay, rayOrigin, rayDir, color, throughput, rngState);
+            updateCurrState(hitInfo, newRay, rayOrigin, rayDir, incomingLight, rayColor, rngState);
             found = true;
             totalFound++;
         }
     }
-    color /= (float)totalFound;
 
-    #if 1 // draw sky
+    #if 0 // draw sky
+    incomingLight /= (float)totalFound;
     if(found)
-        return color;
+        return incomingLight;
 
     float3 unit_direction = normalize(rayDir);
     float a = 0.5 * (unit_direction.y + 1.0f);
     return lerp(float3(1.0, 1.0, 1.0), float3(0.5, 0.7, 1.0), a);
     #else
-        return color;
+        return incomingLight;
     #endif
 }
 

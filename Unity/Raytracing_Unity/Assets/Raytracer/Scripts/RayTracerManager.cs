@@ -8,7 +8,8 @@ using UnityEngine;
 struct Material
 {
     public float4 albedo;
-    public float4 emissive;
+    public float3 emissive;
+    public float emissiveStrength;
 }
 
 [System.Serializable]
@@ -234,7 +235,8 @@ public class RayTracerManager : MonoBehaviour
             sceneLights[0].radius = 0;
             Material material = new Material();
             material.albedo = float4.zero;
-            material.emissive = float4.zero;
+            material.emissive = float3.zero;
+            material.emissiveStrength = 0;
             sceneLights[0].material = material;
         }else
         {
@@ -247,7 +249,8 @@ public class RayTracerManager : MonoBehaviour
                 // visible light sphere
                 Material material = new Material();
                 material.albedo = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
-                material.emissive = new float4(qLight.Color.r, qLight.Color.g, qLight.Color.b, 1.0f);
+                material.emissive = new float3(qLight.Emissive.r, qLight.Emissive.g, qLight.Emissive.b);
+                material.emissive = qLight.emissiveStrength;
                 material.emissive *= qLight.EmissiveMultiplier;
                 sceneLights[i].material = material;
             }
@@ -269,16 +272,15 @@ public class RayTracerManager : MonoBehaviour
             sceneQuadLights[0].bitangent = float4.zero;
             Material material = new Material();
             material.albedo = float4.zero;
-            material.emissive = float4.zero;
+            material.emissive = float3.zero;
+            material.emissiveStrength = 0;
             sceneQuadLights[0].material = material;
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
             {
                 QuadLight qLight = rayQuadLights[i];
-                float4 emission = new float4(qLight.color.r, qLight.color.g, qLight.color.b, 1.0f);
-                emission *= qLight.explosion;
-                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.color, emission);
+                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.Color, qLight.Emissive, qLight.emissiveStrength);
             }
         }
 
@@ -296,7 +298,8 @@ public class RayTracerManager : MonoBehaviour
             sceneSpheres[0].radius = 0.0f;
             Material material = new Material();
             material.albedo = float4.zero;
-            material.emissive = float4.zero;
+            material.emissive = float3.zero;
+            material.emissiveStrength = 0;
             sceneSpheres[0].material = material;
         }else
         {
@@ -307,7 +310,8 @@ public class RayTracerManager : MonoBehaviour
                 sceneSpheres[i].radius = sphMesh.GetRadius();
                 Material material = new Material();
                 material.albedo = new float4(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b, 1.0f);
-                material.emissive = defEmissive;
+                material.emissive = new float3(sphMesh.Emission.r, sphMesh.Emission.g, sphMesh.Emission.b);
+                material.emissiveStrength = sphMesh.EmissionStrength;
                 sceneSpheres[i].material = material;
             }
         }
@@ -329,14 +333,15 @@ public class RayTracerManager : MonoBehaviour
             sceneQuades[0].bitangent = float4.zero;
             Material material = new Material();
             material.albedo = float4.zero;
-            material.emissive = float4.zero;
+            material.emissive = float3.zero;
+            material.emissiveStrength = 0;
             sceneQuades[0].material = material;
         }else
         {
             for(int i = 0; i < totalItems; i++)
             {
                 QuadMesh quadMesh = sceneQuadMeshes[i];
-                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.color, defEmissive);
+                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.color, Color.black, 0);
             }
         }
         quadMeshBuffer.SetData(sceneQuades);
@@ -344,7 +349,7 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("quadMeshCount", totalItems);
     }
 
-    RayQuad GetQuad(Transform t, Color color, float4 emission)
+    RayQuad GetQuad(Transform t, Color color, Color emission, float emissiveStrength)
     {
         RayQuad quad;
         Vector3 pos = t.position;
@@ -358,7 +363,8 @@ public class RayTracerManager : MonoBehaviour
         quad.bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
         Material material = new Material();
         material.albedo = new float4(color.r, color.g, color.b, 1.0f);
-        material.emissive = emission;
+        material.emissive = new float3(emission.r, emission.g, emission.b);
+        material.emissiveStrength = emissiveStrength;
         quad.material = material;
         return quad;
     }

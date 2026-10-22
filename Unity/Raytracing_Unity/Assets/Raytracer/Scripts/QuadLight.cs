@@ -2,6 +2,7 @@ using UnityEngine;
 
 public class QuadLight : MonoBehaviour
 {
-    public Color color = Color.white;
-    public float explosion = 20;
+    public Color Color = Color.white;
+    public Color Emissive = Color.white;
+    public float emissiveStrength = 20;
 }
