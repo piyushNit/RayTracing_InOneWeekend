@@ -1,11 +1,15 @@
-// Each #kernel tells which function to compile; you can have many kernels
+//========================== KERNALS ===================================
 #pragma kernel CSMain
+
+//========================== Constants ===================================
 
 static const float c_rayPosNormalNudge = 0.01f;
 static const float c_minimumRayHitTime = 0.01f;
 
 static const float c_pi = 3.14159265359f;
 static const float c_twopi = 2.0f * 3.14159265359f;
+
+//========================== Data types ===================================
 
 struct Material
 {
@@ -14,6 +18,10 @@ struct Material
 
     float3 emissive;
     float emissiveStrength;
+
+    float reflectionFuzz;
+    float refractionIndex;
+    float2 pad0;
 };
 
 struct Triangle
@@ -68,16 +76,48 @@ struct Ray
 struct RayHitInfo
 {
     bool didHit;
+    bool isFrontFace;
     float dist;
     float3 normal;
     Material material;
 };
 
-float3 ray_at(float t, in Ray ray)
-{
-    return ray.origin + t * ray.dir;
-}
+//========================== Variables ===================================
 
+RWTexture2D<float4> Result;
+
+StructuredBuffer<Sphere> sphereMeshes;
+int sphereMeshCount;
+
+StructuredBuffer<Quad> quadMeshes;
+int quadMeshCount;
+
+StructuredBuffer<Light> sceneLights;
+int totalSceneLightCount;
+
+StructuredBuffer<Quad> sceneQuadLights;
+int totalSceneQuadLightCount;
+
+StructuredBuffer<Triangle> triangleList;
+int totalTriangleCount;
+
+StructuredBuffer<MeshInfo> meshList;
+int totalMeshCount;
+
+float4x4 _CameraToWorld;
+float4x4 _CameraInverseProjection;
+float3 cameraCenter;
+float focalLength;
+
+int rayBounceCount = 1;
+int iFrame;
+
+int perPixelSampleCount = 1;
+
+uint ApplySkyBoxColor = 1;
+float SkyColorApplyRatio = 1.0f;
+
+//========================== Random Number ===================================
 uint wang_hash(inout uint seed)
 {
     seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
@@ -125,41 +165,61 @@ uint seed_from_position(float3 position)
     return hash;
 }
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
-RWTexture2D<float4> Result;
+//========================== Ray & Lighting ===================================
+float3 ray_at(float t, in Ray ray)
+{
+    return ray.origin + t * ray.dir;
+}
 
-StructuredBuffer<Sphere> sphereMeshes;
-int sphereMeshCount;
+void applyColor(in Material mat, inout float3 incomingLight, inout float3 rayColor)
+{
+    float3 emittedLight = mat.emissive * mat.emissiveStrength;
+    incomingLight += emittedLight * rayColor;
+    rayColor *= mat.albedo;
+}
 
-StructuredBuffer<Quad> quadMeshes;
-int quadMeshCount;
+void applyDiffuseMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
+{
+    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    rayDir = random_on_hemisphere(hitInfo.normal, rngState);
+}
 
-StructuredBuffer<Light> sceneLights;
-int totalSceneLightCount;
+void applyMetalMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
+{
+    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    rayDir = normalize(reflect(ray.dir, hitInfo.normal)) + (hitInfo.material.reflectionFuzz * random_on_hemisphere(hitInfo.normal, rngState));
+}
 
-StructuredBuffer<Quad> sceneQuadLights;
-int totalSceneQuadLightCount;
+float reflectance(float cosine, float refraction_index)
+{
+    // Use Schlick's approximation for reflectance.
+    float r0 = (1 - refraction_index) / (1 + refraction_index);
+    r0 = r0 * r0;
+    return r0 + (1 - r0) * pow((1 - cosine), 5);
+}
 
-StructuredBuffer<Triangle> triangleList;
-int totalTriangleCount;
+void applyDielectricMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
+{
+    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    float ri = hitInfo.isFrontFace ? (1.0/max(hitInfo.material.refractionIndex, 0.001)) : hitInfo.material.refractionIndex;
 
-StructuredBuffer<MeshInfo> meshList;
-int totalMeshCount;
+    float cos_theta = min(dot(-ray.dir, hitInfo.normal), 1.0);
+    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-float4x4 _CameraToWorld;
-float4x4 _CameraInverseProjection;
-float3 cameraCenter;
-float focalLength;
+    bool cannot_refract = ri * sin_theta > 1.0;
+    float3 direction = (float3)0;
 
-int rayBounceCount = 1;
-int iFrame;
+    if (cannot_refract || reflectance(cos_theta, ri) > RandomFloat01(rngState))
+        direction = reflect(ray.dir, hitInfo.normal);
+    else
+        direction = refract(ray.dir, hitInfo.normal, ri);
 
-int perPixelSampleCount = 1;
+    rayDir = direction;
 
-uint ApplySkyBoxColor = 1;
-float SkyColorApplyRatio = 1.0f;
+    //rayDir = normalize(refract(ray.dir, hitInfo.normal, ri));
+}
 
+//========================== Ray cast & Intersections ===================================
 float ScalarTriple(float3 u, float3 v, float3 w)
 {
     return dot(cross(u, v), w);
@@ -199,7 +259,10 @@ bool IntersectTriangle(in Ray ray, in Triangle tri, in Material mat, inout RayHi
     {
         hitInfo.didHit = true;
         hitInfo.dist = t;
-        hitInfo.normal = normalize(tri.n0 * w + tri.n1 * u + tri.n2 * v);
+        float3 normal = normalize(tri.n0 * w + tri.n1 * u + tri.n2 * v);
+        bool frontFace = dot(ray.dir, normal) < 0.0f;
+        hitInfo.isFrontFace = frontFace;
+        hitInfo.normal = frontFace ? normal : -normal;
         hitInfo.material = mat;
         return true;
     }
@@ -233,7 +296,9 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, inout uin
     {
         hitInfo.didHit = true;
         hitInfo.dist = t;
-        hitInfo.normal = random_on_hemisphere(quad.normal_sizeY.xyz, rngState);
+        bool frontFace = denom < 0.0f;
+        hitInfo.isFrontFace = frontFace;
+        hitInfo.normal = random_on_hemisphere(frontFace ? normal : -normal, rngState);
         hitInfo.material = quad.material;
         return true; // Hit!
     }
@@ -265,6 +330,7 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, inout 
 	if (dist > c_minimumRayHitTime && dist < info.dist)
     {
         info.didHit = true;
+        info.isFrontFace = !fromInside;
         info.dist = dist;
         float3 normal = normalize(ray_at(info.dist, ray) - sphere.position) * (fromInside ? -1.0f : 1.0f);
         info.normal = normal;
@@ -299,6 +365,8 @@ void TestIntersecrtionForMesh(in Ray ray, inout RayHitInfo hitInfo, in int triSt
         IntersectTriangle(ray, tri, mat, hitInfo);
     }
 }
+
+//========================== Loop Scene objects ===================================
 
 void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 {
@@ -359,23 +427,28 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
     }
 }
 
-void updateDiffuseMaterial(in Material mat, inout float3 incomingLight, inout float3 rayColor)
-{
-    float3 emittedLight = mat.emissive * mat.emissiveStrength;
-    incomingLight += emittedLight * rayColor;
-    rayColor *= mat.albedo;
-}
-
-void updateRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
-{
-    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
-    rayDir = random_on_hemisphere(hitInfo.normal, rngState);
-}
-
 void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 incomingLight, inout float3 rayColor, inout uint rngState)
 {
-    updateDiffuseMaterial(hitInfo.material, incomingLight, rayColor);
-    updateRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+    applyColor(hitInfo.material, incomingLight, rayColor);
+
+    switch(hitInfo.material.matType)
+    {
+        case 0://Diffuse
+        {
+            applyDiffuseMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+        }
+            break;
+        case 1://Metal
+        {
+            applyMetalMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+        }
+            break;
+        case 2://Dielectric
+        {
+            applyDielectricMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+        }
+            break;
+    }
 }
 
 float3 GetEnvironmentLight(in float3 rayDir)

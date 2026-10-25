@@ -11,6 +11,23 @@ struct Material
     public float3 albedo;
     public float3 emissive;
     public float emissiveStrength;
+
+    public float reflectionFuzz;
+    public float RefractionIndex;
+    public float2 pad0;
+
+    public static Material ZeroMat()
+    {
+        Material material = new Material();
+        material.matType = 0;
+        material.albedo = float3.zero;
+        material.emissive = float3.zero;
+        material.emissiveStrength = 0;
+        material.reflectionFuzz = 0;
+        material.RefractionIndex = 0;
+        material.pad0 = float2.zero;
+        return material;
+    }
 }
 
 [System.Serializable]
@@ -286,12 +303,7 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneLights[0].position = float3.zero;
             sceneLights[0].radius = 0;
-            Material material = new Material();
-            material.matType = 0;
-            material.albedo = float3.zero;
-            material.emissive = float3.zero;
-            material.emissiveStrength = 0;
-            sceneLights[0].material = material;
+            sceneLights[0].material = Material.ZeroMat();
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
@@ -307,6 +319,9 @@ public class RayTracerManager : MonoBehaviour
                 material.emissive = new float3(qLight.Emissive.r, qLight.Emissive.g, qLight.Emissive.b);
                 material.emissive = qLight.emissiveStrength;
                 material.emissive *= qLight.EmissiveMultiplier;
+                material.reflectionFuzz = qLight.ReflectionFuzz;
+                material.RefractionIndex = qLight.RefractionIndex;
+                material.pad0 = float2.zero;
                 sceneLights[i].material = material;
             }
         }
@@ -325,18 +340,13 @@ public class RayTracerManager : MonoBehaviour
             sceneQuadLights[0].normal_sizeY = float4.zero;
             sceneQuadLights[0].tangent = float4.zero;
             sceneQuadLights[0].bitangent = float4.zero;
-            Material material = new Material();
-            material.matType = 0;
-            material.albedo = float3.zero;
-            material.emissive = float3.zero;
-            material.emissiveStrength = 0;
-            sceneQuadLights[0].material = material;
+            sceneQuadLights[0].material = Material.ZeroMat();
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
             {
                 QuadLight qLight = rayQuadLights[i];
-                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.MaterialType, qLight.Color, qLight.Emission, qLight.EmissionStrength);
+                sceneQuadLights[i] = GetQuad(qLight.transform, qLight.MaterialType, qLight.Color, qLight.Emission, qLight.EmissionStrength, qLight.ReflectionFuzz, qLight.RefractionIndex);
             }
         }
 
@@ -352,12 +362,7 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneSpheres[0].position = float3.zero;
             sceneSpheres[0].radius = 0.0f;
-            Material material = new Material();
-            material.matType = 0;
-            material.albedo = float3.zero;
-            material.emissive = float3.zero;
-            material.emissiveStrength = 0;
-            sceneSpheres[0].material = material;
+            sceneSpheres[0].material = Material.ZeroMat();
         }else
         {
             for(int i = 0; i < totalItems; i++)
@@ -370,6 +375,9 @@ public class RayTracerManager : MonoBehaviour
                 material.albedo = new float3(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b);
                 material.emissive = new float3(sphMesh.Emission.r, sphMesh.Emission.g, sphMesh.Emission.b);
                 material.emissiveStrength = sphMesh.EmissionStrength;
+                material.reflectionFuzz = sphMesh.ReflectionFuzz;
+                material.RefractionIndex = sphMesh.RefractionIndex;
+                material.pad0 = float2.zero;
                 sceneSpheres[i].material = material;
             }
         }
@@ -389,19 +397,13 @@ public class RayTracerManager : MonoBehaviour
             sceneQuades[0].normal_sizeY = float4.zero;
             sceneQuades[0].tangent = float4.zero;
             sceneQuades[0].bitangent = float4.zero;
-            Material material = new Material();
-            material.matType = 0;
-            material.matType = 0;
-            material.albedo = float3.zero;
-            material.emissive = float3.zero;
-            material.emissiveStrength = 0;
-            sceneQuades[0].material = material;
+            sceneQuades[0].material = Material.ZeroMat();
         }else
         {
             for(int i = 0; i < totalItems; i++)
             {
                 QuadMesh quadMesh = sceneQuadMeshes[i];
-                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.MaterialType, quadMesh.Color, Color.black, 0);
+                sceneQuades[i] = GetQuad(quadMesh.transform, quadMesh.MaterialType, quadMesh.Color, Color.black, 0, quadMesh.ReflectionFuzz, quadMesh.RefractionIndex);
             }
         }
         quadMeshBuffer.SetData(sceneQuades);
@@ -409,7 +411,7 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("quadMeshCount", totalItems);
     }
 
-    RayQuad GetQuad(Transform t, MaterialType matType, Color color, Color emission, float emissiveStrength)
+    RayQuad GetQuad(Transform t, MaterialType matType, Color color, Color emission, float emissiveStrength, float reflectionFuzz, float RefractionIndex)
     {
         RayQuad quad;
         Vector3 pos = t.position;
@@ -426,6 +428,9 @@ public class RayTracerManager : MonoBehaviour
         material.albedo = new float3(color.r, color.g, color.b);
         material.emissive = new float3(emission.r, emission.g, emission.b);
         material.emissiveStrength = emissiveStrength;
+        material.reflectionFuzz = reflectionFuzz;
+        material.RefractionIndex = RefractionIndex;
+        material.pad0 = float2.zero;
         quad.material = material;
         return quad;
     }
@@ -450,7 +455,7 @@ public class RayTracerManager : MonoBehaviour
             meshInfo[0].triCount = 0;
             meshInfo[0].boundMin = float3.zero;
             meshInfo[0].boundMax = float3.zero;
-            meshInfo[0].material = new Material();
+            meshInfo[0].material = Material.ZeroMat();
             meshListBuffer.SetData(meshInfo);
         }else
         {
@@ -473,9 +478,13 @@ public class RayTracerManager : MonoBehaviour
                 meshInfo.boundMax = maxBound;
 
                 Material material = new Material();
+                material.matType = (int)mesh.MaterialType;
                 material.albedo = new float3(mesh.Color.r, mesh.Color.g, mesh.Color.b);
                 material.emissive = new float3(mesh.Emission.r, mesh.Emission.g, mesh.Emission.b);
                 material.emissiveStrength = mesh.EmissionStrength;
+                material.reflectionFuzz = mesh.ReflectionFuzz;
+                material.RefractionIndex = mesh.RefractionIndex;
+                material.pad0 = float2.zero;
                 meshInfo.material = material;
                 meshInfoList[i] = meshInfo;
                 triStartIndex += triangles.Count;

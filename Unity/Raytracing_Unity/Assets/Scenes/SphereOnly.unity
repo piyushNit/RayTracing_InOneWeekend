@@ -453,9 +453,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 1, g: 1, b: 1, a: 1}
   Emission: {r: 1, g: 1, b: 1, a: 1}
   EmissionStrength: 1
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &474206964
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -543,8 +546,8 @@ Transform:
   m_GameObject: {fileID: 474206962}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -15.4, y: 4, z: 18.52}
-  m_LocalScale: {x: 28.416462, y: 28.416462, z: 28.416462}
+  m_LocalPosition: {x: -13.1, y: 4, z: -1.3}
+  m_LocalScale: {x: 17.867418, y: 17.867418, z: 17.867418}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -581,9 +584,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 0.22290954, g: 0.11792451, b: 1, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &671160404
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -709,9 +715,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 2
   Color: {r: 0.854902, g: 0.4392157, b: 0.8392158, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &1179807618
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -837,9 +846,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 0, g: 1, b: 1, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &1348508853
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -965,9 +977,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 1, g: 0.9903463, b: 0, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &1479268107
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -1110,14 +1125,9 @@ MonoBehaviour:
   renderTarget: {fileID: 8400000, guid: 3892716fcf47e4f698f8f24b7f7e4f11, type: 2}
   rayTracerCS: {fileID: 7200000, guid: 7b956819be81e40d7b1c2b5d32223651, type: 3}
   colorAccuCS: {fileID: 7200000, guid: d1269231b3af94777af8e348617760f9, type: 3}
-  useAccumulationTexture: 1
+  useAccumulationTexture: 0
   applySkyboxColor: 0
   skyColorApplyRatio: 1
-  defEmissive:
-    x: 1
-    y: 1
-    z: 1
-    w: 1
 --- !u!1 &1661636307
 GameObject:
   m_ObjectHideFlags: 0
@@ -1150,9 +1160,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 0.5960785, g: 0.9843138, b: 0.5960785, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &1661636309
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -1278,9 +1291,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 0
   Color: {r: 0.18625486, g: 1, b: 0, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &1759491297
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -1602,9 +1618,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 1
   Color: {r: 1, g: 0, b: 0.009601235, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!1 &2071781373
 GameObject:
   m_ObjectHideFlags: 0
@@ -1637,9 +1656,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
+  MaterialType: 1
   Color: {r: 1, g: 0.55620337, b: 0, a: 1}
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
+  ReflectionFuzz: 0.5
+  RefractionIndex: 0.8
 --- !u!135 &2071781375
 SphereCollider:
   m_ObjectHideFlags: 0
