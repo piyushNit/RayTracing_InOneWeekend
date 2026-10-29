@@ -117,6 +117,10 @@ int perPixelSampleCount = 1;
 uint ApplySkyBoxColor = 1;
 float SkyColorApplyRatio = 1.0f;
 
+float defocusAngle = 0;
+float defocusDist = 0;
+
+
 //========================== Random Number ===================================
 uint wang_hash(inout uint seed)
 {
@@ -217,6 +221,13 @@ void applyDielectricMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOr
     rayDir = direction;
 
     //rayDir = normalize(refract(ray.dir, hitInfo.normal, ri));
+}
+
+float2 RandomInUnitDisk(inout uint state)
+{
+    float r = sqrt(RandomFloat01(state));
+    float a = RandomFloat01(state) * c_twopi;
+    return float2(r * cos(a), r * sin(a));
 }
 
 //========================== Ray cast & Intersections ===================================
@@ -407,7 +418,6 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
         for(int iMesh = 0; iMesh < totalMeshCount; iMesh++)
         {
             MeshInfo meshInfo = meshList[iMesh];
-            // Skip the mesh if the ray misses its bounds (or hits them behind the closest hit so far)
             if(!IntersectAABB(ray, meshInfo.boundMin, meshInfo.boundMax, hitInfo.dist))
                 continue;
 
@@ -503,7 +513,13 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
     #endif
 }
 
-Ray CreateCameraRay(float2 uv)
+float3 defocusDiskSample(float3 center, float3 diskU, float3 diskV, inout uint rngState)
+{
+    float2 p = RandomInUnitDisk(rngState);
+    return center + (p.x * diskU) + (p.y * diskV);
+}
+
+Ray CreateCameraRay(float2 uv, inout uint rngState)
 {
     float2 xy = uv * 2.0f - 1.0f;
     float4 rayPos = mul(_CameraInverseProjection, float4(xy, 0.0f, 1.0f));
@@ -515,6 +531,24 @@ Ray CreateCameraRay(float2 uv)
     Ray camRay;
     camRay.origin = rayOrigin;
     camRay.dir = rayDir;
+
+    if (defocusAngle <= 0 || defocusDist <= 0)
+        return camRay;
+
+    // Camera basis (Unity cameraToWorldMatrix: +X right, +Y up, -Z forward)
+    float3 camRight   = normalize(mul((float3x3)_CameraToWorld, float3(1.0f, 0.0f, 0.0f)));
+    float3 camUp      = normalize(mul((float3x3)_CameraToWorld, float3(0.0f, 1.0f, 0.0f)));
+    float3 camForward = normalize(mul((float3x3) _CameraToWorld, float3(0.0f, 0.0f, -1.0f)));
+
+    // Point where this pixel's pinhole ray crosses the (planar) focus plane
+    float3 focusPoint = rayOrigin + rayDir * (defocusDist / dot(rayDir, camForward));
+
+    // Lens disk radius from the aperture angle
+    float defocusRadius = defocusDist * tan(radians(defocusAngle * 0.5f));
+    float3 lensPoint = defocusDiskSample(rayOrigin, camRight * defocusRadius, camUp * defocusRadius, rngState);
+
+    camRay.origin = lensPoint;
+    camRay.dir = normalize(focusPoint - lensPoint);
     return camRay;
 }
 
@@ -539,7 +573,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
         float2 uv = float2((float(id.x) + jitterX) / (float)width, (float(id.y) + jitterY) / (float)height);
 
-        Ray ray = CreateCameraRay(uv);
+        Ray ray = CreateCameraRay(uv, rngState);
         accumulatedColor += ray_color(ray.origin, ray.dir, rngState);
     }
 

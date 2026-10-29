@@ -89,6 +89,11 @@ public class RayTracerManager : MonoBehaviour
     [Range(0.0f, 1.0f)]
     public float skyColorApplyRatio = 1.0f;
 
+    [Header("Defocus")]
+    public bool useDefocus = false;
+    public float defocusAngle = 0.0f;
+    public float defocusDist = 10.0f;
+
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
     private List<RayTraceLight> rayTraceLights;
@@ -260,6 +265,8 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
         rayTracerCS.SetInt("ApplySkyBoxColor", applySkyboxColor ? 1 : 0);
         rayTracerCS.SetFloat("SkyColorApplyRatio", skyColorApplyRatio);
+        rayTracerCS.SetFloat("defocusAngle", useDefocus ? defocusAngle : 0);
+        rayTracerCS.SetFloat("defocusDist", useDefocus ? defocusDist : 0);
 
         UpdateSphereComputeBuffers();
         UpdateQuadComputeBuffers();
