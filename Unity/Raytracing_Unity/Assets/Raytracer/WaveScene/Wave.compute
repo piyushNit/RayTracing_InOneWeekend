@@ -1,0 +1,72 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+//Constants
+static const float PI = 3.14159265f;
+
+StructuredBuffer<float3> restPositions;
+RWStructuredBuffer<float3> positions;
+RWStructuredBuffer<float3> normals;
+
+uint XSegments;
+uint YSegments;
+
+float time;
+float deltaTime;
+
+float waveHeight = 1.0;
+
+float4 waveA = float4(1.0f, 0.0f, 0.5f, 10);
+float4 waveB = float4(0.0f, 1.0f, 0.25f, 20);
+float4 waveC = float4(1.0f, 1.0f, 0.15f, 10);
+
+void GerstnerWave(float4 wave, inout float3 position, inout float3 tangent, inout float3 binormal)
+{
+	float steepness = wave.z;
+	float waveLength = wave.w;
+	float2 direction = wave.xy;
+
+	float k = 2 * PI / waveLength;
+	float c = sqrt(9.8 / k);
+	float2 d = normalize(direction);
+	float f = k * (dot(d, position.xz) - c * time);
+	float a = steepness / k;
+
+	position.x += d.x * (a * cos(f));
+	position.y += waveHeight * a * sin(f);
+	position.z += d.y * (a * cos(f));
+
+	tangent += float3(
+					1 - d.x * d.x * (steepness * sin(f)),
+					d.x * (steepness * cos(f)),
+					-d.x * d.y * (steepness * sin(f)));
+
+	binormal += float3(
+					-d.x * d.y * (steepness * sin(f)),
+					d.y * (steepness * cos(f)),
+					1 - d.y * d.y * (steepness * sin(f)));
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	uint width  = XSegments + 1;
+	uint height = YSegments + 1;
+
+	if (id.x >= width || id.y >= height)
+		return;
+
+	uint index = id.y * width + id.x;
+
+	float3 position = restPositions[index];
+
+	float3 tangent = (float3)0;
+	float3 binormal = (float3)0;
+	GerstnerWave(waveA, position, tangent, binormal);
+	GerstnerWave(waveB, position, tangent, binormal);
+	GerstnerWave(waveC, position, tangent, binormal);
+
+	positions[index] = position;
+
+	normals[index] = normalize(cross(binormal, tangent));
+}

@@ -19,7 +19,7 @@ public class MeshTriangle : MonoBehaviour
 
     MeshFilter meshFilter;
 
-    void Awake()
+    void Start()
     {
         FindMeshFilter();
     }

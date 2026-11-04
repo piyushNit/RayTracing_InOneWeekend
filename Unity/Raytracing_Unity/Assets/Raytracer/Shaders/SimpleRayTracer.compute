@@ -104,6 +104,10 @@ int totalTriangleCount;
 StructuredBuffer<MeshInfo> meshList;
 int totalMeshCount;
 
+RWStructuredBuffer<float3> wavePositions;
+RWStructuredBuffer<float3> waveNormals;
+int waveMeshVertexCount;
+
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
 float3 cameraCenter;
@@ -120,6 +124,8 @@ float SkyColorApplyRatio = 1.0f;
 float defocusAngle = 0;
 float defocusDist = 0;
 
+float3 skyboxUp = float3(1.0, 1.0, 1.0);
+float3 skyboxDown = float3(0.5, 0.7, 1.0);
 
 //========================== Random Number ===================================
 uint wang_hash(inout uint seed)
@@ -175,6 +181,23 @@ float3 ray_at(float t, in Ray ray)
     return ray.origin + t * ray.dir;
 }
 
+float3 getHitPoint(in Ray ray, in RayHitInfo hitInfo)
+{
+    return ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+}
+
+void applyColorOnly(in float3 color, inout float3 incomingLight, inout float3 rayColor)
+{
+    incomingLight += (float3)0 * rayColor;
+    rayColor *= color;
+}
+
+void applyEnvironmentColor(in float3 color, inout float3 incomingLight, inout float3 rayColor)
+{
+    incomingLight += color * rayColor;
+    rayColor *= (float3)1;
+}
+
 void applyColor(in Material mat, inout float3 incomingLight, inout float3 rayColor)
 {
     float3 emittedLight = mat.emissive * mat.emissiveStrength;
@@ -184,13 +207,13 @@ void applyColor(in Material mat, inout float3 incomingLight, inout float3 rayCol
 
 void applyDiffuseMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
 {
-    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    rayOrigin = getHitPoint(ray, hitInfo);
     rayDir = random_on_hemisphere(hitInfo.normal, rngState);
 }
 
 void applyMetalMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
 {
-    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
+    rayOrigin = getHitPoint(ray, hitInfo);
     rayDir = normalize(reflect(ray.dir, hitInfo.normal)) + (hitInfo.material.reflectionFuzz * random_on_hemisphere(hitInfo.normal, rngState));
 }
 
@@ -204,19 +227,20 @@ float reflectance(float cosine, float refraction_index)
 
 void applyDielectricMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
 {
-    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * c_rayPosNormalNudge;
-    float ri = hitInfo.isFrontFace ? (1.0/max(hitInfo.material.refractionIndex, 0.001)) : hitInfo.material.refractionIndex;
+    rayOrigin = getHitPoint(ray, hitInfo);
+    float ri = hitInfo.isFrontFace ? (1.0 / max(hitInfo.material.refractionIndex, 0.001)) : hitInfo.material.refractionIndex;
 
-    float cos_theta = min(dot(-ray.dir, hitInfo.normal), 1.0);
+    float3 rayDirUnit = normalize(ray.dir);
+    float cos_theta = min(dot(-rayDirUnit, hitInfo.normal), 1.0);
     float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
     bool cannot_refract = ri * sin_theta > 1.0;
     float3 direction = (float3)0;
 
     if (cannot_refract || reflectance(cos_theta, ri) > RandomFloat01(rngState))
-        direction = reflect(ray.dir, hitInfo.normal);
+        direction = reflect(rayDirUnit, hitInfo.normal);
     else
-        direction = refract(ray.dir, hitInfo.normal, ri);
+        direction = refract(rayDirUnit, hitInfo.normal, ri);
 
     rayDir = direction;
 
@@ -465,7 +489,7 @@ float3 GetEnvironmentLight(in float3 rayDir)
 {
     float3 unit_direction = normalize(rayDir);
     float a = 0.5 * (unit_direction.y + 1.0f);
-    return lerp(float3(1.0, 1.0, 1.0), float3(0.5, 0.7, 1.0), a);
+    return lerp(skyboxDown, skyboxUp, a);
 }
 
 float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
@@ -498,7 +522,9 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
             totalFound++;
         }else
         {
-            incomingLight += ApplySkyBoxColor ? GetEnvironmentLight(newRay.dir) * saturate(SkyColorApplyRatio) : (float3)0;
+            //incomingLight += ApplySkyBoxColor ? GetEnvironmentLight(newRay.dir) * saturate(SkyColorApplyRatio) : (float3)0;
+            if (ApplySkyBoxColor)
+                applyEnvironmentColor(GetEnvironmentLight(newRay.dir), incomingLight, rayColor);
             break;
         }
     }
@@ -552,7 +578,7 @@ Ray CreateCameraRay(float2 uv, inout uint rngState)
     return camRay;
 }
 
-[numthreads(8,8,1)]
+[numthreads(32, 32,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
     uint width, height;

@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEngine;
 
 [System.Serializable]
-struct Material
+struct RayTraceMaterial
 {
     public int matType;
     public float3 albedo;
@@ -16,9 +17,9 @@ struct Material
     public float RefractionIndex;
     public float2 pad0;
 
-    public static Material ZeroMat()
+    public static RayTraceMaterial ZeroMat()
     {
-        Material material = new Material();
+        RayTraceMaterial material = new RayTraceMaterial();
         material.matType = 0;
         material.albedo = float3.zero;
         material.emissive = float3.zero;
@@ -49,7 +50,7 @@ struct MeshInfo
     public uint triCount;
     public float3 boundMin;
     public float3 boundMax;
-    public Material material;
+    public RayTraceMaterial material;
 };
 
 [System.Serializable]
@@ -57,7 +58,7 @@ struct RaySphere
 {
     public Vector3 position;
     public float radius;
-    public Material material;
+    public RayTraceMaterial material;
 };
 
 [System.Serializable]
@@ -67,14 +68,14 @@ struct RayQuad
     public float4 normal_sizeY;
     public float4 tangent;   // xyz : Right direction of the quad, w : pad
     public float4 bitangent; // xyz : Up direction of the quad, w : pad
-    public Material material;
+    public RayTraceMaterial material;
 };
 
 struct RayLight
 {
     public Vector3 position;
     public float radius;
-    public Material material;
+    public RayTraceMaterial material;
 };
 
 public class RayTracerManager : MonoBehaviour
@@ -94,11 +95,16 @@ public class RayTracerManager : MonoBehaviour
     public float defocusAngle = 0.0f;
     public float defocusDist = 10.0f;
 
+    [Header("Skybox")]
+    public Color skyboxUp = new Color(1.0f, 1.0f, 1.0f);
+    public Color skyboxDown = new Color(0.5f, 0.7f, 1.0f);
+
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
     private List<RayTraceLight> rayTraceLights;
     private List<QuadLight> rayQuadLights;
     private List<MeshTriangle> meshTriangleList;
+    private List<WaveManager> waveManagerList;
 
     private ComputeBuffer sphereMeshBuffers = null;
     private ComputeBuffer quadMeshBuffer = null;
@@ -124,11 +130,10 @@ public class RayTracerManager : MonoBehaviour
     {
         FindSphereMeshes();
         FindQuadMeshes();
-
         FindSphereLights();
         FindQuadLights();
-
         FindMeshTriangles();
+        FindWaveManagers();
 
         rayTracerCamera = Camera.main.GetComponent<RayTracerCamera>();
 
@@ -203,6 +208,11 @@ public class RayTracerManager : MonoBehaviour
         meshTriangleList = meshTriangles.ToList();
     }
 
+    void FindWaveManagers()
+    {
+        waveManagerList = FindObjectsByType<WaveManager>().ToList();
+    }
+
     private void OnDestroy()
     {
         sphereMeshBuffers.Release();
@@ -264,6 +274,8 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
         rayTracerCS.SetInt("ApplySkyBoxColor", applySkyboxColor ? 1 : 0);
+        rayTracerCS.SetVector("skyboxUp", new Vector3(skyboxUp.r, skyboxUp.g, skyboxUp.b));
+        rayTracerCS.SetVector("skyboxDown", new Vector3(skyboxDown.r, skyboxDown.g, skyboxDown.b));
         rayTracerCS.SetFloat("SkyColorApplyRatio", skyColorApplyRatio);
         rayTracerCS.SetFloat("defocusAngle", useDefocus ? defocusAngle : 0);
         rayTracerCS.SetFloat("defocusDist", useDefocus ? defocusDist : 0);
@@ -273,8 +285,9 @@ public class RayTracerManager : MonoBehaviour
         UpdateSceneLight();
         UpdateQuadLightBuffer();
         UpdateTriangleBuffer();
+        UpdateWaveDataToRayTracer();
 
-        if(useAccumulationTexture)
+        if (useAccumulationTexture)
         {
             int dispatchX = Mathf.CeilToInt((float)tempRenderTex.width / 8.0f);
             int dispatchY = Mathf.CeilToInt((float)tempRenderTex.height / 8.0f);
@@ -298,8 +311,8 @@ public class RayTracerManager : MonoBehaviour
         colorAccuCS.SetTexture(colorAccuKernalHandle, "Result", renderTarget);
         colorAccuCS.SetTexture(colorAccuKernalHandle, "SrcTarget", tempRenderTex);
         colorAccuCS.SetFloat("deltaTime", Time.deltaTime);
-        int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 8.0f);
-        int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 8.0f);
+        int dispatchX = Mathf.CeilToInt((float)renderTarget.width / 32.0f);
+        int dispatchY = Mathf.CeilToInt((float)renderTarget.height / 32.0f);
         colorAccuCS.Dispatch(kernalHandle, dispatchX, dispatchY, 1);
     }
 
@@ -310,7 +323,7 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneLights[0].position = float3.zero;
             sceneLights[0].radius = 0;
-            sceneLights[0].material = Material.ZeroMat();
+            sceneLights[0].material = RayTraceMaterial.ZeroMat();
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
@@ -320,7 +333,7 @@ public class RayTracerManager : MonoBehaviour
                 sceneLights[i].radius = qLight.Radius;
                 // color drives the diffuse lighting, emissive is the color of the
                 // visible light sphere
-                Material material = new Material();
+                RayTraceMaterial material = new RayTraceMaterial();
                 material.matType = 0;
                 material.albedo = new float3(qLight.Color.r, qLight.Color.g, qLight.Color.b);
                 material.emissive = new float3(qLight.Emissive.r, qLight.Emissive.g, qLight.Emissive.b);
@@ -347,7 +360,7 @@ public class RayTracerManager : MonoBehaviour
             sceneQuadLights[0].normal_sizeY = float4.zero;
             sceneQuadLights[0].tangent = float4.zero;
             sceneQuadLights[0].bitangent = float4.zero;
-            sceneQuadLights[0].material = Material.ZeroMat();
+            sceneQuadLights[0].material = RayTraceMaterial.ZeroMat();
         }else
         {
             for(int i = 0; i < totalSceneLights; i++)
@@ -369,7 +382,7 @@ public class RayTracerManager : MonoBehaviour
         {
             sceneSpheres[0].position = float3.zero;
             sceneSpheres[0].radius = 0.0f;
-            sceneSpheres[0].material = Material.ZeroMat();
+            sceneSpheres[0].material = RayTraceMaterial.ZeroMat();
         }else
         {
             for(int i = 0; i < totalItems; i++)
@@ -377,7 +390,7 @@ public class RayTracerManager : MonoBehaviour
                 SphereMesh sphMesh = sceneSphereMeshes[i];
                 sceneSpheres[i].position = sphMesh.GetPosition();
                 sceneSpheres[i].radius = sphMesh.GetRadius();
-                Material material = new Material();
+                RayTraceMaterial material = new RayTraceMaterial();
                 material.matType = (int)sphMesh.MaterialType;
                 material.albedo = new float3(sphMesh.Color.r, sphMesh.Color.g, sphMesh.Color.b);
                 material.emissive = new float3(sphMesh.Emission.r, sphMesh.Emission.g, sphMesh.Emission.b);
@@ -404,7 +417,7 @@ public class RayTracerManager : MonoBehaviour
             sceneQuades[0].normal_sizeY = float4.zero;
             sceneQuades[0].tangent = float4.zero;
             sceneQuades[0].bitangent = float4.zero;
-            sceneQuades[0].material = Material.ZeroMat();
+            sceneQuades[0].material = RayTraceMaterial.ZeroMat();
         }else
         {
             for(int i = 0; i < totalItems; i++)
@@ -430,7 +443,7 @@ public class RayTracerManager : MonoBehaviour
         Vector3 biTangent = t.up;
         quad.tangent = new float4(tangent.x, tangent.y, tangent.z, 1.0f);
         quad.bitangent = new float4(biTangent.x, biTangent.y, biTangent.z, 1.0f);
-        Material material = new Material();
+        RayTraceMaterial material = new RayTraceMaterial();
         material.matType = (int)matType;
         material.albedo = new float3(color.r, color.g, color.b);
         material.emissive = new float3(emission.r, emission.g, emission.b);
@@ -462,7 +475,7 @@ public class RayTracerManager : MonoBehaviour
             meshInfo[0].triCount = 0;
             meshInfo[0].boundMin = float3.zero;
             meshInfo[0].boundMax = float3.zero;
-            meshInfo[0].material = Material.ZeroMat();
+            meshInfo[0].material = RayTraceMaterial.ZeroMat();
             meshListBuffer.SetData(meshInfo);
         }else
         {
@@ -484,7 +497,7 @@ public class RayTracerManager : MonoBehaviour
                 meshInfo.boundMin = minBound;
                 meshInfo.boundMax = maxBound;
 
-                Material material = new Material();
+                RayTraceMaterial material = new RayTraceMaterial();
                 material.matType = (int)mesh.MaterialType;
                 material.albedo = new float3(mesh.Color.r, mesh.Color.g, mesh.Color.b);
                 material.emissive = new float3(mesh.Emission.r, mesh.Emission.g, mesh.Emission.b);
@@ -506,5 +519,20 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("totalTriangleCount", totalTriangleCount);
         rayTracerCS.SetInt("totalMeshCount", totalMeshCount);
         rayTracerCS.SetBuffer(kernalHandle, "meshList", meshListBuffer);
+    }
+
+    void UpdateWaveDataToRayTracer()
+    {
+        //For now I will be using the 0th index since my compute shader uses that only
+        if (waveManagerList.Count <= 0)
+        {
+            rayTracerCS.SetInt("waveMeshVertexCount", 0);
+            return;
+        }
+
+        WaveManager waveManager = waveManagerList[0];
+        rayTracerCS.SetBuffer(kernalHandle, "wavePositions", waveManager.PositionBufferGB);
+        rayTracerCS.SetBuffer(kernalHandle, "waveNormals", waveManager.NormalBufferGB);
+        rayTracerCS.SetInt("waveMeshVertexCount", waveManager.TotalVertexCount);
     }
 }

@@ -3121,7 +3121,7 @@ MonoBehaviour:
   Emission: {r: 0, g: 0, b: 0, a: 1}
   EmissionStrength: 0
   ReflectionFuzz: 0.5
-  RefractionIndex: 0.8
+  RefractionIndex: 1.5
 --- !u!135 &1348508853
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -3678,8 +3678,13 @@ MonoBehaviour:
   rayTracerCS: {fileID: 7200000, guid: 7b956819be81e40d7b1c2b5d32223651, type: 3}
   colorAccuCS: {fileID: 7200000, guid: d1269231b3af94777af8e348617760f9, type: 3}
   useAccumulationTexture: 0
-  applySkyboxColor: 0
+  applySkyboxColor: 1
   skyColorApplyRatio: 1
+  useDefocus: 0
+  defocusAngle: 0
+  defocusDist: 10
+  skyboxUp: {r: 1, g: 1, b: 1, a: 1}
+  skyboxDown: {r: 0.5, g: 0.7, b: 1, a: 1}
 --- !u!1 &1672966343
 GameObject:
   m_ObjectHideFlags: 0
