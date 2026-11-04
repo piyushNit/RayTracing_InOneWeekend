@@ -49,6 +49,8 @@ public class WaveManager : MonoBehaviour
     public Wave waveB = new Wave (0.0f, 1.0f, 0.25f, 20);
     public Wave waveC = new Wave(1.0f, 1.0f, 0.15f, 10);
 
+    public RaytraceMaterial rayMaterial;
+
     Mesh mesh;
 
     [Header("Draw debug")]

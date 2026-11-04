@@ -323,6 +323,13 @@ MonoBehaviour:
   EmissionStrength: 0
   ReflectionFuzz: 0.5
   RefractionIndex: 0.8
+  rayTraceMaterial:
+    MaterialType: 0
+    Color: {r: 0, g: 1, b: 0.25490198, a: 1}
+    Emission: {r: 0, g: 0, b: 0, a: 1}
+    EmissionStrength: 0
+    ReflectionFuzz: 0.5
+    RefractionIndex: 0.8
 --- !u!1 &330585543
 GameObject:
   m_ObjectHideFlags: 0
@@ -512,6 +519,13 @@ MonoBehaviour:
   EmissionStrength: 10
   ReflectionFuzz: 0.5
   RefractionIndex: 0.8
+  rayTraceMaterial:
+    MaterialType: 0
+    Color: {r: 0, g: 0, b: 0, a: 1}
+    Emission: {r: 1, g: 1, b: 1, a: 1}
+    EmissionStrength: 10
+    ReflectionFuzz: 0.5
+    RefractionIndex: 0.8
 --- !u!135 &349854691
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -737,6 +751,13 @@ MonoBehaviour:
   EmissionStrength: 0
   ReflectionFuzz: 0.5
   RefractionIndex: 1.5
+  rayTraceMaterial:
+    MaterialType: 2
+    Color: {r: 1, g: 1, b: 1, a: 1}
+    Emission: {r: 0, g: 0, b: 0, a: 1}
+    EmissionStrength: 0
+    ReflectionFuzz: 0.5
+    RefractionIndex: 1.5
 --- !u!135 &1137259305
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -868,6 +889,13 @@ MonoBehaviour:
   EmissionStrength: 0
   ReflectionFuzz: 0.5
   RefractionIndex: 0.8
+  rayTraceMaterial:
+    MaterialType: 0
+    Color: {r: 1, g: 0, b: 0, a: 1}
+    Emission: {r: 0, g: 0, b: 0, a: 1}
+    EmissionStrength: 0
+    ReflectionFuzz: 0.5
+    RefractionIndex: 0.8
 --- !u!135 &1164164293
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -984,6 +1012,13 @@ MonoBehaviour:
   EmissionStrength: 0
   ReflectionFuzz: 0.5
   RefractionIndex: 0.8
+  rayTraceMaterial:
+    MaterialType: 1
+    Color: {r: 1, g: 0, b: 0, a: 1}
+    Emission: {r: 0, g: 0, b: 0, a: 1}
+    EmissionStrength: 0
+    ReflectionFuzz: 0.5
+    RefractionIndex: 0.8
 --- !u!135 &1326514714
 SphereCollider:
   m_ObjectHideFlags: 0

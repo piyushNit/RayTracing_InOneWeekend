@@ -20,7 +20,7 @@ float4 waveA = float4(1.0f, 0.0f, 0.5f, 10);
 float4 waveB = float4(0.0f, 1.0f, 0.25f, 20);
 float4 waveC = float4(1.0f, 1.0f, 0.15f, 10);
 
-void GerstnerWave(float4 wave, inout float3 position, inout float3 tangent, inout float3 binormal)
+void GerstnerWave(float4 wave, float3 restPos, inout float3 position, inout float3 tangent, inout float3 binormal)
 {
 	float steepness = wave.z;
 	float waveLength = wave.w;
@@ -29,22 +29,26 @@ void GerstnerWave(float4 wave, inout float3 position, inout float3 tangent, inou
 	float k = 2 * PI / waveLength;
 	float c = sqrt(9.8 / k);
 	float2 d = normalize(direction);
-	float f = k * (dot(d, position.xz) - c * time);
+	float f = k * (dot(d, restPos.xz) - c * time);
 	float a = steepness / k;
 
-	position.x += d.x * (a * cos(f));
-	position.y += waveHeight * a * sin(f);
-	position.z += d.y * (a * cos(f));
+	float sinF = sin(f);
+	float cosF = cos(f);
 
+	position.x += d.x * (a * cosF);
+	position.y += waveHeight * a * sinF;
+	position.z += d.y * (a * cosF);
+
+	// waveHeight scales position.y, so it has to scale the y slope as well.
 	tangent += float3(
-					1 - d.x * d.x * (steepness * sin(f)),
-					d.x * (steepness * cos(f)),
-					-d.x * d.y * (steepness * sin(f)));
+					-d.x * d.x * (steepness * sinF),
+					waveHeight * d.x * (steepness * cosF),
+					-d.x * d.y * (steepness * sinF));
 
 	binormal += float3(
-					-d.x * d.y * (steepness * sin(f)),
-					d.y * (steepness * cos(f)),
-					1 - d.y * d.y * (steepness * sin(f)));
+					-d.x * d.y * (steepness * sinF),
+					waveHeight * d.y * (steepness * cosF),
+					-d.y * d.y * (steepness * sinF));
 }
 
 [numthreads(8,8,1)]
@@ -58,13 +62,14 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
 	uint index = id.y * width + id.x;
 
-	float3 position = restPositions[index];
+	float3 restPos = restPositions[index];
+	float3 position = restPos;
 
-	float3 tangent = (float3)0;
-	float3 binormal = (float3)0;
-	GerstnerWave(waveA, position, tangent, binormal);
-	GerstnerWave(waveB, position, tangent, binormal);
-	GerstnerWave(waveC, position, tangent, binormal);
+	float3 tangent = float3(1, 0, 0);
+	float3 binormal = float3(0, 0, 1);
+	GerstnerWave(waveA, restPos, position, tangent, binormal);
+	GerstnerWave(waveB, restPos, position, tangent, binormal);
+	GerstnerWave(waveC, restPos, position, tangent, binormal);
 
 	positions[index] = position;
 

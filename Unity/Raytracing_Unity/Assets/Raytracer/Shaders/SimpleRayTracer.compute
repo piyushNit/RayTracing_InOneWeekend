@@ -104,9 +104,12 @@ int totalTriangleCount;
 StructuredBuffer<MeshInfo> meshList;
 int totalMeshCount;
 
-RWStructuredBuffer<float3> wavePositions;
-RWStructuredBuffer<float3> waveNormals;
-int waveMeshVertexCount;
+StructuredBuffer<float3> wavePositions;
+StructuredBuffer<float3> waveNormals;
+StructuredBuffer<int> waveIndexBuffer;
+StructuredBuffer<Material> waveMaterial;
+
+int waveIndexBufferCount;
 
 float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
@@ -227,7 +230,6 @@ float reflectance(float cosine, float refraction_index)
 
 void applyDielectricMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
 {
-    rayOrigin = getHitPoint(ray, hitInfo);
     float ri = hitInfo.isFrontFace ? (1.0 / max(hitInfo.material.refractionIndex, 0.001)) : hitInfo.material.refractionIndex;
 
     float3 rayDirUnit = normalize(ray.dir);
@@ -235,16 +237,18 @@ void applyDielectricMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOr
     float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
     bool cannot_refract = ri * sin_theta > 1.0;
+    bool reflected = cannot_refract || reflectance(cos_theta, ri) > RandomFloat01(rngState);
     float3 direction = (float3)0;
 
-    if (cannot_refract || reflectance(cos_theta, ri) > RandomFloat01(rngState))
+    if (reflected)
         direction = reflect(rayDirUnit, hitInfo.normal);
     else
         direction = refract(rayDirUnit, hitInfo.normal, ri);
 
     rayDir = direction;
 
-    //rayDir = normalize(refract(ray.dir, hitInfo.normal, ri));
+    float nudgeSide = reflected ? 1.0f : -1.0f;
+    rayOrigin = ray_at(hitInfo.dist, ray) + hitInfo.normal * (c_rayPosNormalNudge * nudgeSide);
 }
 
 float2 RandomInUnitDisk(inout uint state)
@@ -260,14 +264,14 @@ float ScalarTriple(float3 u, float3 v, float3 w)
     return dot(cross(u, v), w);
 }
 
-bool IntersectTriangle(in Ray ray, in Triangle tri, in Material mat, inout RayHitInfo hitInfo)
+bool IntersectTriangle(in Ray ray, in float3 v0, in float3 v1, in float3 v2, in float3 n0, in float3 n1, in float3 n2, in Material mat, inout RayHitInfo hitInfo, inout uint rngState)
 {
     float t = 0;
     float u = 0;
     float v = 0;
 
-    float3 edge1 = tri.v1 - tri.v0;
-    float3 edge2 = tri.v2 - tri.v0;
+    float3 edge1 = v1 - v0;
+    float3 edge2 = v2 - v0;
 
     float3 pvec = cross(ray.dir, edge2);
     float det = dot(edge1, pvec);
@@ -277,7 +281,7 @@ bool IntersectTriangle(in Ray ray, in Triangle tri, in Material mat, inout RayHi
 
     float invDet = 1.0 / det;
 
-    float3 tvec = ray.origin - tri.v0;
+    float3 tvec = ray.origin - v0;
     u = dot(tvec, pvec) * invDet;
     if (u < 0.0 || u > 1.0)
         return false;
@@ -294,7 +298,8 @@ bool IntersectTriangle(in Ray ray, in Triangle tri, in Material mat, inout RayHi
     {
         hitInfo.didHit = true;
         hitInfo.dist = t;
-        float3 normal = normalize(tri.n0 * w + tri.n1 * u + tri.n2 * v);
+        //float3 normal = RandomUnitVector(rngState);//normalize(n0 * w + n1 * u + n2 * v);
+        float3 normal = normalize(n0 * w + n1 * u + n2 * v);
         bool frontFace = dot(ray.dir, normal) < 0.0f;
         hitInfo.isFrontFace = frontFace;
         hitInfo.normal = frontFace ? normal : -normal;
@@ -392,13 +397,30 @@ bool IntersectAABB(in Ray ray, in float3 boundMin, in float3 boundMax, in float 
     return tNear <= tFar && tFar >= 0.0f && tNear < maxDist;
 }
 
-void TestIntersecrtionForMesh(in Ray ray, inout RayHitInfo hitInfo, in int triStart, in int triEnd, in Material mat)
+void TestIntersecrtionForMesh(in Ray ray, inout RayHitInfo hitInfo, in int triStart, in int triEnd, in Material mat, inout uint rngState)
 {
     for(int i = triStart; i < triEnd; i++)
     {
         Triangle tri = triangleList[i];
-        IntersectTriangle(ray, tri, mat, hitInfo);
+        IntersectTriangle(ray, tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat, hitInfo, rngState);
     }
+}
+
+void TestIntersectionForWaveMesh(in Ray ray, inout RayHitInfo hitInfo, in int triIndex, inout uint rngState)
+{
+    int index0 = waveIndexBuffer[triIndex + 0];
+    int index1 = waveIndexBuffer[triIndex + 1];
+    int index2 = waveIndexBuffer[triIndex + 2];
+
+    float3 v0 = wavePositions[index0];
+    float3 v1 = wavePositions[index1];
+    float3 v2 = wavePositions[index2];
+
+    float3 n0 = waveNormals[index0];
+    float3 n1 = waveNormals[index1];
+    float3 n2 = waveNormals[index2];
+
+    IntersectTriangle(ray, v0, v1, v2, n0, n1, n2, waveMaterial[0], hitInfo, rngState);
 }
 
 //========================== Loop Scene objects ===================================
@@ -447,7 +469,15 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 
             int triangleStart = meshInfo.triIndexStart;
             int triangleEnd = triangleStart + meshInfo.triCount;
-            TestIntersecrtionForMesh(ray, hitInfo, triangleStart, triangleEnd, meshInfo.material);
+            TestIntersecrtionForMesh(ray, hitInfo, triangleStart, triangleEnd, meshInfo.material, rngState);
+        }
+    }
+
+    if(waveIndexBufferCount >= 3)
+    {
+        for(int tri = 0; tri < waveIndexBufferCount; tri += 3)
+        {
+            TestIntersectionForWaveMesh(ray, hitInfo, tri, rngState);
         }
     }
 
@@ -578,7 +608,7 @@ Ray CreateCameraRay(float2 uv, inout uint rngState)
     return camRay;
 }
 
-[numthreads(32, 32,1)]
+[numthreads(8, 8, 1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
     uint width, height;
