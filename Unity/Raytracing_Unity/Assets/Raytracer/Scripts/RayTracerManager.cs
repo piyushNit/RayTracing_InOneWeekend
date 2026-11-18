@@ -98,6 +98,7 @@ public class RayTracerManager : MonoBehaviour
     [Header("Skybox")]
     public Color skyboxUp = new Color(1.0f, 1.0f, 1.0f);
     public Color skyboxDown = new Color(0.5f, 0.7f, 1.0f);
+    public Transform SunTransform;
 
     private List<SphereMesh> sceneSphereMeshes;
     private List<QuadMesh> sceneQuadMeshes;
@@ -274,6 +275,7 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetMatrix("_CameraInverseProjection", Camera.main.projectionMatrix.inverse);
         rayTracerCS.SetFloat("focalLength", rayTracerCamera.focalLength);
         rayTracerCS.SetVector("cameraCenter", rayTracerCamera.Position);
+        rayTracerCS.SetVector("sunPosition", SunTransform.position);
         rayTracerCS.SetInt("iFrame", iFrame);
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));

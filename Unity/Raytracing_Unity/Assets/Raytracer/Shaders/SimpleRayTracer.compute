@@ -75,12 +75,16 @@ struct Ray
 
 struct RayHitInfo
 {
-    bool didHit;
+    uint hitFlag;
     bool isFrontFace;
     float dist;
     float3 normal;
     Material material;
 };
+
+//========================== Hit Flags ===================================
+static const uint HIT_FLAG_TRUE         = 0x000001;
+static const uint HIT_FLAG_WATER        = 0x000002;
 
 //========================== Variables ===================================
 
@@ -115,6 +119,8 @@ float4x4 _CameraToWorld;
 float4x4 _CameraInverseProjection;
 float3 cameraCenter;
 float focalLength;
+
+float3 sunPosition;
 
 int rayBounceCount = 1;
 int iFrame;
@@ -208,6 +214,56 @@ void applyColor(in Material mat, inout float3 incomingLight, inout float3 rayCol
     rayColor *= mat.albedo;
 }
 
+static const float3 SEA_BASE           = float3(0.0,0.09,0.18) * 100;
+static const float3 SEA_WATER_COLOR    = float3(0.8,0.9,0.6) * 100;
+static const  float SEA_HEIGHT          = 0.6;
+
+float3 getSkyColor(float3 e)
+{
+    e.y = max(e.y,0.0);
+    float3 ret;
+    ret.x = pow(1.0-e.y,2.0);
+    ret.y = 1.0-e.y;
+    ret.z = 0.6+(1.0-e.y)*0.4;
+    return ret;
+}
+
+float diffuse(float3 n,float3 l,float p)
+{
+    return pow(dot(n,l) * 0.4 + 0.6,p);
+}
+
+float specular(float3 n,float3 l,float3 e,float s)
+{    
+    float nrm = (s + 8.0) / (3.1415 * 8.0);
+    return pow(max(dot(reflect(e,n),l),0.0),s) * nrm;
+}
+
+float3 applyWaterColor(float3 p, float3 n, float3 l, float3 eye, float3 dist)
+{
+    float fresnel = 1.0 - max(dot(n,-eye),0.0);
+    fresnel = pow(fresnel,3.0) * 0.65;
+        
+    // bteitler: Bounce eye ray off ocean towards sky, and get the color of the sky
+    float3 reflected = getSkyColor(reflect(eye,n));    
+    
+    // bteitler: refraction effect based on angle between light surface normal
+    float3 refracted = SEA_BASE + diffuse(n,l,80.0) * SEA_WATER_COLOR * 0.12; 
+    
+    // bteitler: blend the refracted color with the reflected color based on our fresnel term
+    float3 color = lerp(refracted,reflected,fresnel);
+    
+    // bteitler: Apply a distance based attenuation factor which is stronger
+    // at peaks
+    float atten = max(1.0 - dot(dist,dist) * 0.001, 0.0);
+    color += SEA_WATER_COLOR * (p.y - SEA_HEIGHT) * 0.18 * atten;
+    
+    // bteitler: Apply specular highlight
+    color += (float3)specular(n,l,eye,60.0);
+    
+    return color;
+}
+
 void applyDiffuseMatRay(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout uint rngState)
 {
     rayOrigin = getHitPoint(ray, hitInfo);
@@ -264,7 +320,7 @@ float ScalarTriple(float3 u, float3 v, float3 w)
     return dot(cross(u, v), w);
 }
 
-bool IntersectTriangle(in Ray ray, in float3 v0, in float3 v1, in float3 v2, in float3 n0, in float3 n1, in float3 n2, in Material mat, inout RayHitInfo hitInfo, inout uint rngState)
+bool IntersectTriangle(in Ray ray, in float3 v0, in float3 v1, in float3 v2, in float3 n0, in float3 n1, in float3 n2, in Material mat, in uint hitFlag, inout RayHitInfo hitInfo, inout uint rngState)
 {
     float t = 0;
     float u = 0;
@@ -296,7 +352,7 @@ bool IntersectTriangle(in Ray ray, in float3 v0, in float3 v1, in float3 v2, in 
     t = dot(edge2, qvec) * invDet;
     if (t > c_minimumRayHitTime && t < hitInfo.dist)
     {
-        hitInfo.didHit = true;
+        hitInfo.hitFlag = hitFlag;
         hitInfo.dist = t;
         //float3 normal = RandomUnitVector(rngState);//normalize(n0 * w + n1 * u + n2 * v);
         float3 normal = normalize(n0 * w + n1 * u + n2 * v);
@@ -334,7 +390,7 @@ bool IntersectQuad(in Ray ray, in Quad quad, inout RayHitInfo hitInfo, inout uin
 
     if (abs(localX) <= halfWidth && abs(localY) <= halfHeight && t < hitInfo.dist)
     {
-        hitInfo.didHit = true;
+        hitInfo.hitFlag = HIT_FLAG_TRUE;
         hitInfo.dist = t;
         bool frontFace = denom < 0.0f;
         hitInfo.isFrontFace = frontFace;
@@ -369,7 +425,7 @@ bool TestSphereTrace(in Ray ray, inout RayHitInfo info, in Sphere sphere, inout 
     
 	if (dist > c_minimumRayHitTime && dist < info.dist)
     {
-        info.didHit = true;
+        info.hitFlag = HIT_FLAG_TRUE;
         info.isFrontFace = !fromInside;
         info.dist = dist;
         float3 normal = normalize(ray_at(info.dist, ray) - sphere.position) * (fromInside ? -1.0f : 1.0f);
@@ -402,7 +458,7 @@ void TestIntersecrtionForMesh(in Ray ray, inout RayHitInfo hitInfo, in int triSt
     for(int i = triStart; i < triEnd; i++)
     {
         Triangle tri = triangleList[i];
-        IntersectTriangle(ray, tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat, hitInfo, rngState);
+        IntersectTriangle(ray, tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat, HIT_FLAG_TRUE, hitInfo, rngState);
     }
 }
 
@@ -420,7 +476,7 @@ void TestIntersectionForWaveMesh(in Ray ray, inout RayHitInfo hitInfo, in int tr
     float3 n1 = waveNormals[index1];
     float3 n2 = waveNormals[index2];
 
-    IntersectTriangle(ray, v0, v1, v2, n0, n1, n2, waveMaterial[0], hitInfo, rngState);
+    IntersectTriangle(ray, v0, v1, v2, n0, n1, n2, waveMaterial[0], HIT_FLAG_WATER, hitInfo, rngState);
 }
 
 //========================== Loop Scene objects ===================================
@@ -493,22 +549,43 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 
 void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 incomingLight, inout float3 rayColor, inout uint rngState)
 {
-    applyColor(hitInfo.material, incomingLight, rayColor);
-
     switch(hitInfo.material.matType)
     {
         case 0://Diffuse
         {
+            applyColor(hitInfo.material, incomingLight, rayColor);
             applyDiffuseMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
         }
             break;
         case 1://Metal
         {
+            applyColor(hitInfo.material, incomingLight, rayColor);
             applyMetalMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
         }
             break;
         case 2://Dielectric
         {
+            applyColor(hitInfo.material, incomingLight, rayColor);
+            applyDielectricMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+        }
+            break;
+        case 3://Water
+        {
+            // p: point on ocean surface to get color for
+            // n: normal on ocean surface at <p>
+            // l: light (sun) direction
+            // eye: ray direction from camera position for this pixel
+            // dist: distance from camera to point <p> on ocean surface
+
+            //float3 p = getHitPoint(ray, hitInfo);
+            //float3 n = hitInfo.normal;
+            //float3 i = normalize(sunPosition - p);
+            //
+            //float3 cameraPos = _CameraToWorld._m03_m13_m23;
+            //float3 eye = normalize(cameraPos - p);
+            //
+            //applyWaterColor(p, n, i, eye, hitInfo.dist);
+            applyColor(hitInfo.material, incomingLight, rayColor);
             applyDielectricMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
         }
             break;
@@ -545,7 +622,7 @@ float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
 
         TestInTheScene(newRay, hitInfo, rngState);
 
-        if(hitInfo.didHit)
+        if(hitInfo.hitFlag != 0)
         {
             updateCurrState(hitInfo, newRay, rayOrigin, rayDir, incomingLight, rayColor, rngState);
             found = true;

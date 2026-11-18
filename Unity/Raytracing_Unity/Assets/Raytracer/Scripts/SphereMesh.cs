@@ -5,7 +5,8 @@ public enum MaterialType
 {
     Diffuse = 0,
     Metal,
-    Dielectric
+    Dielectric,
+    Water
 }
 
 public class SphereMesh : MonoBehaviour

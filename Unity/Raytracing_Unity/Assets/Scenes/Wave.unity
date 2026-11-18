@@ -564,9 +564,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SphereMesh
   rayTraceMaterial:
     MaterialType: 0
-    Color: {r: 0, g: 0, b: 0, a: 1}
-    Emission: {r: 1, g: 1, b: 1, a: 1}
-    EmissionStrength: 1
+    Color: {r: 0.8301887, g: 0.8301887, b: 0.8301887, a: 1}
+    Emission: {r: 1, g: 0.9454188, b: 0, a: 1}
+    EmissionStrength: 20
     ReflectionFuzz: 0.5
     RefractionIndex: 0.8
 --- !u!23 &300805130
@@ -635,8 +635,8 @@ Transform:
   m_GameObject: {fileID: 300805128}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 20.5, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: 29.1, y: 21.4, z: 44.9}
+  m_LocalScale: {x: 14.780762, y: 14.780762, z: 14.780762}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -813,8 +813,9 @@ MonoBehaviour:
   useDefocus: 0
   defocusAngle: 0
   defocusDist: 10
-  skyboxUp: {r: 0.8018868, g: 0.8018868, b: 0.8018868, a: 1}
-  skyboxDown: {r: 0.9150943, g: 0.9150943, b: 0.9150943, a: 1}
+  skyboxUp: {r: 0.27058825, g: 0.5019608, b: 0.6745098, a: 1}
+  skyboxDown: {r: 0.72156864, g: 0.7882353, b: 0.81960785, a: 1}
+  SunTransform: {fileID: 300805132}
 --- !u!4 &514988459
 Transform:
   m_ObjectHideFlags: 0
@@ -961,8 +962,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 961739749}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.38268274, y: -0, z: -0, w: 0.9238798}
-  m_LocalPosition: {x: 0, y: 10.3, z: -10.4}
+  m_LocalRotation: {x: 0.12877992, y: 0, z: 0, w: 0.99167323}
+  m_LocalPosition: {x: -2.06, y: 3.8, z: -13.41}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1234,12 +1235,12 @@ MonoBehaviour:
     steepness: 0.25
     length: 3
   rayMaterial:
-    MaterialType: 2
+    MaterialType: 3
     Color: {r: 0.1745283, g: 0.7061519, b: 1, a: 1}
     Emission: {r: 0, g: 0, b: 0, a: 1}
     EmissionStrength: 0
     ReflectionFuzz: 0.5
-    RefractionIndex: 1.33
+    RefractionIndex: 1.3
   DrawWaveDebugMaterial: 1
 --- !u!1 &2061775351
 GameObject:
