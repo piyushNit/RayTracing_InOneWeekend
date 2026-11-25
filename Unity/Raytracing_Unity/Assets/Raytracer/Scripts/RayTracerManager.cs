@@ -96,8 +96,24 @@ public class RayTracerManager : MonoBehaviour
     public float defocusDist = 10.0f;
 
     [Header("Skybox")]
-    public Color skyboxUp = new Color(1.0f, 1.0f, 1.0f);
-    public Color skyboxDown = new Color(0.5f, 0.7f, 1.0f);
+    public Color skyHorozonColor = new Color(1.0f, 1.0f, 1.0f);
+    public Color skyZenithColor = new Color(0.5f, 0.7f, 1.0f);
+    [Range(0.0f, 1.0f)]
+    public float cloudCoverage = 0.45f;
+    public Color sunColor;
+
+    [Header("Ocean")]
+    public float seaHeight = 0.4f;
+    public float seaChoppy = 3.5f;
+    public float seaSpeed = 0.8f;
+    public float seaFreq = 0.16f;
+    public float seaSwellHeight = 0.8f;
+    [Range(0.0f, 1.0f)]
+    public float seaReflectivity = 0.5f;      // scales Fresnel; 1 = physical
+    public Color seaBaseColor = new Color(0.0f, 0.03f, 0.10f);         // deep water body colour
+    public Color seaWaterColor = new Color(0.10f, 0.35f, 0.45f);        // sub-surface scatter colour (lit wave backs / crests)
+    public float seaFogDensity = 0.0025f;
+
     public Transform SunTransform;
 
     private List<SphereMesh> sceneSphereMeshes;
@@ -280,8 +296,25 @@ public class RayTracerManager : MonoBehaviour
         rayTracerCS.SetInt("rayBounceCount", Mathf.Max(rayBounceCount, 1));
         rayTracerCS.SetInt("perPixelSampleCount", Mathf.Max(perPixelSampelCount, 1));
         rayTracerCS.SetInt("ApplySkyBoxColor", applySkyboxColor ? 1 : 0);
-        rayTracerCS.SetVector("skyboxUp", new Vector3(skyboxUp.r, skyboxUp.g, skyboxUp.b));
-        rayTracerCS.SetVector("skyboxDown", new Vector3(skyboxDown.r, skyboxDown.g, skyboxDown.b));
+
+        rayTracerCS.SetVector("skyHorizonColor", new Vector3(skyHorozonColor.r, skyHorozonColor.g, skyHorozonColor.b));
+        rayTracerCS.SetVector("skyZenithColor", new Vector3(skyZenithColor.r, skyZenithColor.g, skyZenithColor.b));
+        rayTracerCS.SetFloat("cloudCoverage", cloudCoverage);
+        rayTracerCS.SetVector("sunDirection", SunTransform.forward);
+        rayTracerCS.SetVector("sunColor", new Vector3(sunColor.r, sunColor.g, sunColor.b));
+
+        rayTracerCS.SetFloat("seaHeight", seaHeight);
+        rayTracerCS.SetFloat("seaChoppy", seaChoppy);
+        rayTracerCS.SetFloat("seaSpeed", seaSpeed);
+        rayTracerCS.SetFloat("seaFreq", seaFreq);
+        rayTracerCS.SetFloat("seaSwellHeight", seaSwellHeight);
+        rayTracerCS.SetFloat("seaReflectivity", seaReflectivity);
+        rayTracerCS.SetVector("seaBaseColor", new Vector3(seaBaseColor.r, seaBaseColor.g, seaBaseColor.b));
+        rayTracerCS.SetVector("seaWaterColor", new Vector3(seaWaterColor.r, seaWaterColor.g, seaWaterColor.b));
+        rayTracerCS.SetFloat("seaFogDensity", seaFogDensity);
+
+        rayTracerCS.SetFloat("oceanTime", Time.time);
+
         rayTracerCS.SetFloat("SkyColorApplyRatio", skyColorApplyRatio);
         rayTracerCS.SetFloat("defocusAngle", useDefocus ? defocusAngle : 0);
         rayTracerCS.SetFloat("defocusDist", useDefocus ? defocusDist : 0);

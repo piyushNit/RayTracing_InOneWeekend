@@ -549,7 +549,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &300805129
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -557,7 +557,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 300805128}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c38f437fd9f484ce1b3e849d9c8fbc44, type: 3}
   m_Name: 
@@ -813,9 +813,20 @@ MonoBehaviour:
   useDefocus: 0
   defocusAngle: 0
   defocusDist: 10
-  skyboxUp: {r: 0.27058825, g: 0.5019608, b: 0.6745098, a: 1}
-  skyboxDown: {r: 0.72156864, g: 0.7882353, b: 0.81960785, a: 1}
-  SunTransform: {fileID: 300805132}
+  skyHorozonColor: {r: 0.5019608, g: 0.65882355, b: 0.8196079, a: 1}
+  skyZenithColor: {r: 0.019607844, g: 0.12941177, b: 0.45098042, a: 1}
+  cloudCoverage: 0.45
+  sunColor: {r: 0, g: 0, b: 0, a: 0}
+  seaHeight: 0.4
+  seaChoppy: 3.5
+  seaSpeed: 0.8
+  seaFreq: 0.16
+  seaSwellHeight: 0.8
+  seaReflectivity: 0.5
+  seaBaseColor: {r: 0, g: 0.03, b: 0.1, a: 1}
+  seaWaterColor: {r: 0.1, g: 0.35, b: 0.45, a: 1}
+  seaFogDensity: 0.0025
+  SunTransform: {fileID: 792402942}
 --- !u!4 &514988459
 Transform:
   m_ObjectHideFlags: 0
@@ -826,6 +837,37 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: -0, y: -0, z: -0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &792402941
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 792402942}
+  m_Layer: 0
+  m_Name: Sun
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &792402942
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 792402941}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 9.73396, y: -0.3713, z: 3.57851}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -1132,7 +1174,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!23 &1988531595
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -1388,3 +1430,4 @@ SceneRoots:
   - {fileID: 2061775356}
   - {fileID: 436098052}
   - {fileID: 118098993}
+  - {fileID: 792402942}

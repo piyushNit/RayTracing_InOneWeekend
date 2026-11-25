@@ -9,6 +9,11 @@ static const float c_minimumRayHitTime = 0.01f;
 static const float c_pi = 3.14159265359f;
 static const float c_twopi = 2.0f * 3.14159265359f;
 
+static const int    ITER_GEOMETRY = 3;
+static const int    ITER_NORMAL   = 5;
+static const float  OCEAN_FAR     = 2000.0;
+static const float2x2 OCTAVE_M    = float2x2(1.6, 1.2, -1.2, 1.6);
+
 //========================== Data types ===================================
 
 struct Material
@@ -133,8 +138,26 @@ float SkyColorApplyRatio = 1.0f;
 float defocusAngle = 0;
 float defocusDist = 0;
 
-float3 skyboxUp = float3(1.0, 1.0, 1.0);
-float3 skyboxDown = float3(0.5, 0.7, 1.0);
+float oceanTime;
+
+//========================== Ocean Sky ======================================
+float3 skyHorizonColor;
+float3 skyZenithColor;
+float cloudCoverage;
+float mountainHeight;
+float3 sunDirection;
+float3 sunColor;
+
+//========================== Sea ======================================
+float  seaHeight;
+float  seaChoppy;
+float  seaSpeed;
+float  seaFreq;
+float  seaSwellHeight;
+float  seaReflectivity;      // scales Fresnel; 1 = physical
+float3 seaBaseColor;         // deep water body colour
+float3 seaWaterColor;        // sub-surface scatter colour (lit wave backs / crests)
+float  seaFogDensity;
 
 //========================== Random Number ===================================
 uint wang_hash(inout uint seed)
@@ -183,6 +206,39 @@ uint seed_from_position(float3 position)
     
     return hash;
 }
+
+float hash12(float2 p)
+{
+    uint2 q = asuint(int2(p));
+    uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+    h = (h ^ (h >> 16)) * 0x27d4eb2du;
+    h ^= h >> 15;
+    return float(h) / 4294967296.0;
+}
+
+// Value noise in [-1, 1]
+float noise2(float2 p)
+{
+    float2 i = floor(p);
+    float2 f = frac(p);
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return -1.0 + 2.0 * lerp(lerp(hash12(i), hash12(i + float2(1, 0)), u.x),
+                             lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), u.x), u.y);
+}
+
+float fbm2(float2 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; i++)
+    {
+        v += a * noise2(p);
+        p = mul(p, OCTAVE_M);
+        a *= 0.5;
+    }
+    return v;
+}
+
 
 //========================== Ray & Lighting ===================================
 float3 ray_at(float t, in Ray ray)
@@ -479,42 +535,91 @@ void TestIntersectionForWaveMesh(in Ray ray, inout RayHitInfo hitInfo, in int tr
     IntersectTriangle(ray, v0, v1, v2, n0, n1, n2, waveMaterial[0], HIT_FLAG_WATER, hitInfo, rngState);
 }
 
+// One sharp-crested wave octave
+float seaOctave(float2 uv, float choppy)
+{
+    uv += noise2(uv);
+    float2 wv  = 1.0 - abs(sin(uv));
+    float2 swv = abs(cos(uv));
+    wv = lerp(wv, swv, wv);
+    return pow(abs(1.0 - pow(abs(wv.x * wv.y), 0.65)), choppy);
+}
+
+float oceanMap(float3 p, int iterations)
+{
+    float freq   = seaFreq;
+    float amp    = seaHeight;
+    float choppy = seaChoppy;
+    float2 uv = p.xz;
+    uv.x *= 0.75;
+
+    float t = 1.0 + oceanTime * seaSpeed;
+    float h = 0.0;
+    for (int i = 0; i < iterations; i++)
+    {
+        float d = seaOctave((uv + t) * freq, choppy) + seaOctave((uv - t) * freq, choppy);
+        h += d * amp;
+        uv = mul(uv, OCTAVE_M);
+        freq *= 1.9;
+        amp *= 0.22;
+        choppy = lerp(choppy, 1.0, 0.2);
+    }
+
+    // Long directional swell (the big rolling wave in the foreground)
+    h += seaSwellHeight * sin(dot(p.xz, float2(0.28, 0.96)) * 0.22 - oceanTime * 1.1);
+    return p.y - h;
+}
+
+float3 oceanNormal(float3 p, float eps)
+{
+    float h = oceanMap(p, ITER_NORMAL);
+    float3 n;
+    n.x = oceanMap(float3(p.x + eps, p.y, p.z), ITER_NORMAL) - h;
+    n.z = oceanMap(float3(p.x, p.y, p.z + eps), ITER_NORMAL) - h;
+    n.y = eps;
+    return normalize(n);
+}
+
+bool TraceOcean(in Ray ray, inout RayHitInfo hitInfo)
+{
+    float tm = 0.0;
+    float tx = min(hitInfo.dist, OCEAN_FAR);
+
+    float hx = oceanMap(ray_at(tx, ray), ITER_GEOMETRY);
+    if (hx > 0.0)
+        return false;   // the whole segment stays above the water
+
+    float hm = oceanMap(ray_at(tm, ray), ITER_GEOMETRY);
+    if (hm < 0.0)
+        return false;   // ray starts below the surface (grazing reflection nudge)
+
+    // Bisection / regular false towards the surface crossing
+    float tmid = 0.0;
+    for (int i = 0; i < 8; i++)
+    {
+        tmid = lerp(tm, tx, hm / (hm - hx));
+        float hmid = oceanMap(ray_at(tmid, ray), ITER_GEOMETRY);
+        if (hmid < 0.0) { tx = tmid; hx = hmid; }
+        else            { tm = tmid; hm = hmid; }
+    }
+
+    if (tmid <= c_minimumRayHitTime || tmid >= hitInfo.dist)
+        return false;
+
+    hitInfo.hitFlag     = HIT_FLAG_WATER;
+    hitInfo.dist        = tmid;
+    hitInfo.isFrontFace = true;
+    // Normal sampling footprint grows with distance to avoid far-field aliasing/moire
+    hitInfo.normal      = oceanNormal(ray_at(tmid, ray), 0.001 + tmid * 0.002);
+    hitInfo.material    = (Material)0;
+    hitInfo.material.matType = 3;
+    return true;
+}
+
 //========================== Loop Scene objects ===================================
 
 void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
 {
-    // if(quadMeshCount > 0)
-    // {
-    //     for(int i = 0; i < quadMeshCount; i++)
-    //     {
-    //         Quad quad = quadMeshes[i];
-    //         IntersectQuad(ray, quad, hitInfo, rngState);
-    //     }
-    // }
-
-    // if(totalSceneQuadLightCount > 0)
-    // {
-    //     for(int i = 0; i < totalSceneQuadLightCount; i++)
-    //     {
-    //         Quad quad = sceneQuadLights[i];
-    //         IntersectQuad(ray, quad, hitInfo, rngState);
-    //     }
-    // }
-
-    // if(totalSceneLightCount > 0)
-    // {
-    //     for(int i = 0; i < totalSceneLightCount; i++)
-    //     {
-    //         // Test with lights
-    //         Light sceneLight = sceneLights[i];
-    //         Sphere lightSph;
-    //         lightSph.position = sceneLight.position;
-    //         lightSph.radius = sceneLight.radius;
-    //         lightSph.material = sceneLight.material;
-    //         TestSphereTrace(ray, hitInfo, lightSph, rngState);
-    //     }
-    // }
-
     if(totalMeshCount > 0 && totalTriangleCount > 0)
     {
         for(int iMesh = 0; iMesh < totalMeshCount; iMesh++)
@@ -529,13 +634,13 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
         }
     }
 
-    if(waveIndexBufferCount >= 3)
+    /*if(waveIndexBufferCount >= 3)
     {
         for(int tri = 0; tri < waveIndexBufferCount; tri += 3)
         {
             TestIntersectionForWaveMesh(ray, hitInfo, tri, rngState);
         }
-    }
+    }*/
 
     // Test with all the spheres
     for(int i = 0; i < sphereMeshCount; i++)
@@ -545,6 +650,36 @@ void TestInTheScene(in Ray ray, inout RayHitInfo hitInfo, inout uint rngState)
         {
         }
     }
+
+    TraceOcean(ray, hitInfo);
+}
+
+void applyOceanMaterial(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 incomingLight, inout float3 rayColor)
+{
+    float3 dir = normalize(ray.dir);
+    float3 p = ray_at(hitInfo.dist, ray);
+    float3 n = hitInfo.normal;
+
+    // Schlick Fresnel for water (IOR 1.33 -> F0 ~ 0.02)
+    float r0 = (1.0 - 1.33) / (1.0 + 1.33);
+    r0 *= r0;
+    float F = (r0 + (1.0 - r0) * pow(1.0 - saturate(dot(n, -dir)), 5.0)) * seaReflectivity;
+
+    // Light that enters the water, scatters and comes back out (replaces tracing refraction)
+    float sunLit = pow(saturate(dot(n, sunDirection)) * 0.4 + 0.6, 80.0);
+    float3 body = seaBaseColor + seaWaterColor * 0.12 * sunLit;
+    body += seaWaterColor * 0.10 * max(p.y - seaHeight * 0.5, 0.0);   // brighter crests
+
+    // Aerial perspective toward the horizon
+    float fog = 1.0 - exp(-hitInfo.dist * seaFogDensity);
+    incomingLight += rayColor * fog * skyHorizonColor;
+    rayColor *= (1.0 - fog);
+
+    incomingLight += rayColor * (1.0 - F) * body;
+    rayColor *= F;   // remaining energy follows the perfect mirror reflection (no noise)
+
+    rayOrigin = p + n * c_rayPosNormalNudge;
+    rayDir = reflect(dir, n);
 }
 
 void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, inout float3 rayDir, inout float3 incomingLight, inout float3 rayColor, inout uint rngState)
@@ -571,22 +706,9 @@ void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, 
             break;
         case 3://Water
         {
-            // p: point on ocean surface to get color for
-            // n: normal on ocean surface at <p>
-            // l: light (sun) direction
-            // eye: ray direction from camera position for this pixel
-            // dist: distance from camera to point <p> on ocean surface
-
-            //float3 p = getHitPoint(ray, hitInfo);
-            //float3 n = hitInfo.normal;
-            //float3 i = normalize(sunPosition - p);
-            //
-            //float3 cameraPos = _CameraToWorld._m03_m13_m23;
-            //float3 eye = normalize(cameraPos - p);
-            //
-            //applyWaterColor(p, n, i, eye, hitInfo.dist);
-            applyColor(hitInfo.material, incomingLight, rayColor);
-            applyDielectricMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+            //applyColor(hitInfo.material, incomingLight, rayColor);
+            //applyDielectricMatRay(hitInfo, ray, rayOrigin, rayDir, rngState);
+            applyOceanMaterial(hitInfo, ray, rayOrigin, rayDir, incomingLight, rayColor);
         }
             break;
     }
@@ -594,9 +716,37 @@ void updateCurrState(in RayHitInfo hitInfo, in Ray ray, inout float3 rayOrigin, 
 
 float3 GetEnvironmentLight(in float3 rayDir)
 {
-    float3 unit_direction = normalize(rayDir);
-    float a = 0.5 * (unit_direction.y + 1.0f);
-    return lerp(skyboxDown, skyboxUp, a);
+    rayDir = normalize(rayDir);
+    float3 col = lerp(skyHorizonColor, skyZenithColor, pow(max(rayDir.y, 0.0), 0.3));
+
+    float sd = saturate(dot(rayDir, sunDirection));
+    col += sunColor * (0.12 * pow(sd, 8.0) + 0.8 * pow(sd, 120) + 8.0 * pow(sd, 1500.0));
+
+    // Clouds projected on a plane above the camera
+    if(rayDir.y > 0.01)
+    {
+        float2 uv = rayDir.xz / rayDir.y;
+        float dens = fbm2(uv * 0.35 + oceanTime * 0.01) * 0.5 + 0.5;
+        float c = smoothstep(1.0 - cloudCoverage, 1.0 - cloudCoverage + 0.12, dens);
+        c *= smoothstep(0.02, 0.2, rayDir.y);
+        float shade = smoothstep(1.0 - cloudCoverage, 1.0 - cloudCoverage + 0.35, dens);
+        float3 cloudCol = float3(0.95, 0.97, 1.0) - float3(0.40, 0.38, 0.32) * shade + float3(0.6, 0.6, 0.55) * pow(sd, 8.0);
+        col = lerp(col, cloudCol, c);
+    }
+
+    float az = atan2(rayDir.x, rayDir.z);
+    float sunAz = atan2(sunDirection.x, sunDirection.z);
+    float rel = az - sunAz;
+    rel = rel - c_twopi * floor((rel + c_pi) / c_twopi);
+    float mask = smoothstep(-0.45, -0.25, rel) * (1.0 - smoothstep(1.4, 1.6, rel));
+    float ridge = mountainHeight * (0.25 + 0.75 * smoothstep(-0.35, 0.9, rel)) * (0.55 + 0.45 * (fbm2(float2(rel * 5.0, 0.0)) * 0.5 + 0.5)) * mask;
+    if(rayDir.y >= 0.0 && rayDir.y < ridge)
+    {
+        float haze = 0.12 + 0.45 * (1.0 * smoothstep(-0.3, 0.8, rel));
+        col = lerp(float3(0.10, 0.17, 0.27), skyHorizonColor, haze);
+    }
+
+    return col;
 }
 
 float3 ray_color(in float3 initOrigin, in float3 initDir, inout uint rngState)
